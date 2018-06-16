@@ -22,6 +22,12 @@ static void (*PITCallbackFunction)(void*);
 // PIT semaphore
 OS_ECB *PITSemaphore;
 
+//Arrays to store the samples, they are also used in main
+uint16_t SamplesChA[16];
+uint16_t SamplesChB[16];
+uint16_t SamplesChC[16];
+uint8_t NbSamplesChA, NbSamplesChB, NbSamplesChC = 0;
+
 bool PIT_Init(const uint32_t moduleClk, void (*userFunction)(void*), void* userArguments)
 {
   PITSemaphore = OS_SemaphoreCreate(0);
@@ -70,7 +76,8 @@ void __attribute__ ((interrupt)) PIT_ISR(void){
   OS_ISREnter();
 
   PIT_TFLG0 |= PIT_TFLG_TIF_MASK;       //Clear interrupt Flag (w1c)
-
+  if (PITCallbackFunction)
+      (*PITCallbackFunction)(PITUserArguments);     //Calls the RTC ISR callback function
   OS_SemaphoreSignal(PITSemaphore);
 
   //if (PITCallbackFunction)

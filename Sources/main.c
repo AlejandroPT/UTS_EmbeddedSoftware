@@ -29,6 +29,7 @@
 #include "Cpu.h"
 #include "OS.h"
 #include "analog.h"
+#include "types.h"
 
 // ----------------------------------------
 // Thread set up
@@ -40,6 +41,16 @@
 // Thread stacks
 OS_THREAD_STACK(InitModulesThreadStack, THREAD_STACK_SIZE); /*!< The stack for the LED Init thread. */
 static uint32_t AnalogThreadStacks[NB_ANALOG_CHANNELS][THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));
+//-------         -----------------       --------------
+extern OS_ECB *PIT_Semaphore;           /*!< Binary semaphore for signaling PIT interrupt */
+
+//Thread declarations
+static void PacketCheckerThread(void* pData);
+
+//Stacks
+static uint32_t PacketCheckerThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+
+//-------         -----------------       --------------
 
 // ----------------------------------------
 // Thread priorities
@@ -53,6 +64,16 @@ volatile uint8_t *NbRaises;          //Number of raises done
 volatile uint8_t *NbLowers;          //Number of lowers done
 //TODO Check if it is fine to store NbRaises and NbLowers in s single byte
 int16union_t Frequency;    //Frecuency
+
+//Arrays to store the samples
+static uint16_t SamplesChA[16];
+static uint16_t SamplesChB[16];
+static uint16_t SamplesChC[16];
+static uint8_t NbSamples = 0;
+
+static uint16_t RMSChA, RMSChB, RMSChC;
+
+static void PITCallback(void* arg);
 
 //Packet Handling Functions
 {
@@ -170,54 +191,53 @@ int16union_t Frequency;    //Frecuency
         return false;
       return SendReadBytePacket(Packet_Parameter1);
   }
+
+  /*! @brief Handles a received timing mode packet.
+   *  @return bool - TRUE if data is correct and corresponds to the packet.
+   */
+  bool HandleTimingModePacket()
+  {
+    if (Packet_Parameter1 > 2 ||Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+    if (Packet_Parameter1 == 0)
+      return Packet_Put(TIMING_MODE_COMMAND, &Timing_Mode, 0, 0);
+    else if (!Flash_Write8((uint8_t *)Timing_Mode, Packet_Parameter1))
+      return false;
+      //TODO check if this is enough for changing the timing mode
+
+    return true;
+  }
+
+  /*! @brief Handles a received number of raises packet.
+   *  @return bool - TRUE if data is correct and corresponds to the packet.
+   */
+  bool HandleNbRaisesPacket()
+  {
+    if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+    if (Packet_Parameter1 == 0)
+      return Packet_Put(NB_RAISES_COMMAND, &NbRaises, 0, 0);
+    else if (!Flash_Write8((uint8_t *)NbRaises, 0x00))
+      return false;
+
+    return true;
+  }
+
+  /*! @brief Handles a received number of lowers packet.
+   *  @return bool - TRUE if data is correct and corresponds to the packet.
+   */
+  bool HandleNbLowersPacket()
+  {
+    if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+    if (Packet_Parameter1 == 0)
+      return Packet_Put(NB_LOWERS_COMMAND, &NbLowers, 0, 0);
+    else if (!Flash_Write8((uint8_t *)NbLowers, 0x00))
+      return false;
+
+    return true;
+  }
 }
-
-/*! @brief Handles a received timing mode packet.
- *  @return bool - TRUE if data is correct and corresponds to the packet.
- */
-bool HandleTimingModePacket()
-{
-  if (Packet_Parameter1 > 2 ||Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
-    return false;
-  if (Packet_Parameter1 == 0)
-    return Packet_Put(TIMING_MODE_COMMAND, &Timing_Mode, 0, 0);
-  else if (!Flash_Write8((uint8_t *)Timing_Mode, Packet_Parameter1))
-    return false;
-    //TODO check if this is enough for changing the timing mode
-
-  return true;
-}
-
-/*! @brief Handles a received number of raises packet.
- *  @return bool - TRUE if data is correct and corresponds to the packet.
- */
-bool HandleNbRaisesPacket()
-{
-  if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
-    return false;
-  if (Packet_Parameter1 == 0)
-    return Packet_Put(NB_RAISES_COMMAND, &NbRaises, 0, 0);
-  else if (!Flash_Write8((uint8_t *)NbRaises, 0x00))
-    return false;
-
-  return true;
-}
-
-/*! @brief Handles a received number of lowers packet.
- *  @return bool - TRUE if data is correct and corresponds to the packet.
- */
-bool HandleNbLowersPacket()
-{
-  if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
-    return false;
-  if (Packet_Parameter1 == 0)
-    return Packet_Put(NB_LOWERS_COMMAND, &NbLowers, 0, 0);
-  else if (!Flash_Write8((uint8_t *)NbLowers, 0x00))
-    return false;
-
-  return true;
-}
-
 //
 
 /*! @brief Data structure used to pass Analog configuration to a user thread
@@ -296,6 +316,36 @@ void AnalogLoopbackThread(void* pData)
   }
 }
 
+//Thread for sampling the channels
+void SamplingThread(void* pData){
+  Analog_Get(analogData->0, &SamplesChA[NbSamples]);
+  Analog_Get(analogData->1, &SamplesChB[NbSamples]);
+  Analog_Get(analogData->2, &SamplesChC[NbSamples++]);
+
+  if(NbSamples == 16){
+    OS_SemaphoreSignal(SemSamplesReady);
+    NbSamples = 0;
+  }
+}
+
+//thread for calculating the RMS values
+void RMSThread(void* pData){
+  OS_SemaphoreWait(SemSamplesReady, 0);
+
+  uint64_t sumSqA, sumSqB, sumSqC = 0;
+
+  for(uint8_t i = 0; i < 16; i++){
+    sumSqA += SamplesChA[i] * SamplesChA[i];
+    sumSqB += SamplesChB[i] * SamplesChB[i];
+    sumSqC += SamplesChC[i] * SamplesChC[i];
+  }
+
+  RMSChA = (sumSqA/16)
+
+
+
+}
+
 /*lint -save  -e970 Disable MISRA rule (6.3) checking. */
 int main(void)
 /*lint -restore Enable MISRA rule (6.3) checking. */
@@ -369,6 +419,16 @@ bool HandlePacket()
   }
 
   return ErrorStatus;
+}
+
+void PITCallback(void* arg)
+{
+  Analog_Get(analogData->0, &SamplesChA[NbSamplesChA]);
+  NbSamplesChA = (NbSamplesChA + 1) % 16;
+  Analog_Get(analogData->1, &SamplesChB[NbSamplesChB]);
+  NbSamplesChB = (NbSamplesChB + 1) % 16;
+  Analog_Get(analogData->2, &SamplesChC[NbSamplesChC]);
+  NbSamplesChB = (NbSamplesChB + 1) % 16;
 }
 
 /*!

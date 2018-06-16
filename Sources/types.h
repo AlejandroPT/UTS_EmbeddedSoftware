@@ -13,7 +13,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
+#include <math.h>
+#include <float.h>
+ 
 // Unions to efficiently access hi and lo parts of integers and words
 typedef union
 {
