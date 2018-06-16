@@ -43,14 +43,22 @@
 // ----------------------------------------
 // Arbitrary thread stack size - big enough for stacking of interrupts and OS use.
 #define THREAD_STACK_SIZE 100
-#define NB_ANALOG_CHANNELS 6
+#define NB_ANALOG_CHANNELS 3
+
+#define ALARM 3
+#define RAISE 1
+#define LOWER 2
+
+const static double LO_TRESHHOLD = 2.00;
+const static double HI_TRESHHOLD = 3.00;
 
 // Thread stacks
 OS_THREAD_STACK(InitModulesThreadStack, THREAD_STACK_SIZE); /*!< The stack for the LED Init thread. */
 static uint32_t AnalogThreadStacks[NB_ANALOG_CHANNELS][THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));
 //-------         -----------------       --------------
 extern OS_ECB *PIT_Semaphore;           /*!< Binary semaphore for signaling PIT interrupt */
-OS_ECB *SemSamplesReady;
+OS_ECB *SamplesReadySem;
+OS_ECB *AlarmEventSem;
 
 //Thread declarations
 static void PacketCheckerThread(void* pData);
@@ -64,7 +72,7 @@ static uint32_t PacketCheckerThreadStack[THREAD_STACK_SIZE] __attribute__ ((alig
 // Thread priorities
 // 0 = highest priority
 // ----------------------------------------
-const uint8_t ANALOG_THREAD_PRIORITIES[NB_ANALOG_CHANNELS] = {1, 2, 3, 4, 5, 6};
+const uint8_t ANALOG_THREAD_PRIORITIES[NB_ANALOG_CHANNELS] = {3, 4, 5};
 
 //Definitions
 volatile uint8_t *Timing_Mode;       //1 definitive, 2 inverse
@@ -73,18 +81,10 @@ volatile uint8_t *NbLowers;          //Number of lowers done
 //TODO Check if it is fine to store NbRaises and NbLowers in s single byte
 int16union_t Frequency;    //Frecuency
 
-//Arrays to store the samples
-static int16_t SamplesChA[16];
-static int16_t SamplesChB[16];
-static int16_t SamplesChC[16];
-static uint8_t NbSamples = 0;
-
-static int16_t RMSChA, RMSChB, RMSChC;
-
 static void PITCallback(void* arg);
 
 //Packet Handling Functions
-//{
+{
   #define STARTUP_COMMAND 0x04
   #define READ_BYTE_COMMAND 0x08
   #define PROGRAM_BYTE_COMMAND 0x07
@@ -245,7 +245,7 @@ static void PITCallback(void* arg);
 
     return true;
   }
-//}
+}
 //
 
 /*! @brief Data structure used to pass Analog configuration to a user thread
@@ -255,37 +255,46 @@ typedef struct AnalogThreadData
 {
   OS_ECB* semaphore;
   uint8_t channelNb;
+  double rms;
+  uint8_t alarm;         //0 for nit triggered, 1 high trigger, 2 for low triggered
+  double deviation;      //Deviation from acceptable SetDefaultFlashValues
+  int16_t samples[16];   //Deviation from acceptable SetDefaultFlashValues
+  uint16_t trigCount;    //Deviation from acceptable SetDefaultFlashValues
+
 } TAnalogThreadData;
 
 /*! @brief Analog thread configuration data
  *
  */
-static TAnalogThreadData AnalogThreadData[NB_ANALOG_CHANNELS] =
+static ChannelData ChannelData[NB_ANALOG_CHANNELS] =
 {
   {  //Channel A in
     .semaphore = NULL,
-    .channelNb = 0
+    .channelNb = 0,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
   },
   {  //Channel B in
     .semaphore = NULL,
-    .channelNb = 1
+    .channelNb = 1,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
   },
   {  //Channel C in
     .semaphore = NULL,
-    .channelNb = 2
+    .channelNb = 2,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
   },
-  {  //Raise channel out
-    .semaphore = NULL,
-    .channelNb = 3
-  },
-  {  //Lower channel out
-    .semaphore = NULL,
-    .channelNb = 4
-  },
-  {  //Alarm channel out
-    .semaphore = NULL,
-    .channelNb = 5
-  }
 };
 
 /*! @brief Initialises modules.
@@ -293,7 +302,8 @@ static TAnalogThreadData AnalogThreadData[NB_ANALOG_CHANNELS] =
  */
 static void InitModulesThread(void* pData)
 {
-  SemSamplesReady = OS_SemaphoreCreate(0);
+  SamplesReadySem = OS_SemaphoreCreate(0);
+  AlarmEventSem = OS_SemaphoreCreate(0);
 
   // Analog
   (void)Analog_Init(CPU_BUS_CLK_HZ);
@@ -306,56 +316,46 @@ static void InitModulesThread(void* pData)
   OS_ThreadDelete(OS_PRIORITY_SELF);
 }
 
-/*! @brief Samples a value on an ADC channel and sends it to the corresponding DAC channel.
- *
- */
-void AnalogLoopbackThread(void* pData)
-{
-  // Make the code easier to read by giving a name to the typecast'ed pointer
-  #define analogData ((TAnalogThreadData*)pData)
-
-  for (;;)
-  {
-    int16_t analogInputValue;
-
-    (void)OS_SemaphoreWait(analogData->semaphore, 0);
-    // Get analog sample
-    Analog_Get(analogData->channelNb, &analogInputValue);
-    // Put analog sample
-    Analog_Put(analogData->channelNb, analogInputValue);
-  }
-}
-
 //Thread for sampling the channels
 void SamplingThread(void* pData){
-  Analog_Get(0, &SamplesChA[NbSamples]);
-  Analog_Get(1, &SamplesChB[NbSamples]);
-  Analog_Get(2, &SamplesChC[NbSamples++]);
+  #define threadData ((TAnalogThreadData*) pData)
+  int16_t inputValue;
+  uint8_t nbSamples = 0
+  for(;;){
+    OS_SemaphoreWait(threadData->semaphore,0);
 
-  if(NbSamples == 16){
-    OS_SemaphoreSignal(SemSamplesReady);
-    NbSamples = 0;
+    Analog_Get(threadData->channelNb, &inputValue);
+    threadData->samples[nbSamples++] = inputValue;
+
+    if(nbSamples == 16){
+      threadData->nbSamples = 0;                           //Resets the amount of samples taken
+      threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
+
+      if(threadData->rms > HI_TRESHHOLD){
+        threadData->alarm = 1;
+        threadData->trigCount = 0;
+        Analog_Put(ALARM, voltageToRaw(5.00));
+      }
+      else if(threadData->rms < LO_TRESHHOLD){
+        threadData->alarm = 2;
+        threadData->trigCount = 0;
+        Analog_Put(ALARM, voltageToRaw(5.00));
+      }
+    }
   }
 }
 
-//thread for calculating the RMS values
-void RMSThread(void* pData){
-  OS_SemaphoreWait(SemSamplesReady, 0);
+//Thread to signal when channels should sample
+void PIT0Thread(void* data)
+{
+  for (;;)
+  {
+    OS_SemaphoreWait(PIT0Semaphore, 0);       //Wait on PIT Semaphore
 
-  uint64_t sumSqA, sumSqB, sumSqC = 0;
-
-  for(uint8_t i = 0; i < 16; i++){
-    sumSqA += SamplesChA[i] * SamplesChA[i];
-    sumSqB += SamplesChB[i] * SamplesChB[i];
-    sumSqC += SamplesChC[i] * SamplesChC[i];
+    // Signal the analog channels to take a sample
+    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
+      (void)OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
   }
-
-  RMSChA = (int16_t)srqt(sumSqA/16);
-  RMSChB = (int16_t)srqt(sumSqB/16);
-  RMSChC = (int16_t)srqt(sumSqC/16);
-
-
-
 }
 
 /*lint -save  -e970 Disable MISRA rule (6.3) checking. */
@@ -443,6 +443,39 @@ void PITCallback(void* arg)
   Analog_Get(analogData->2, &SamplesChC[NbSamplesChC]);
   NbSamplesChB = (NbSamplesChB + 1) % 16;
   */
+}
+
+/*!
+ * @brief Converts analogue input into voltage in Volts
+ *
+ * @return float - voltage value
+ */
+double rawToVoltage(int16_t raw)
+{
+  return ((float) raw * 20)/pow(2,16);
+}
+
+/*!
+ * @brief Converts volts into analog output
+ *
+ * @return int16_t - voltage value
+ */
+int16_t voltageToRaw(double voltage)
+{
+  return (uint16_t) ((voltage * pow(2,16)) / 20);
+}
+
+/*!
+ * @brief Converts 16 analog samples into RMS voltage
+ *
+ * @return double - voltage value
+ */
+double rmsCalc(int16_t samples[16])
+{
+  double sum = 0;
+  for(uint8_t i = 0; i < 16; i++)
+    sum = rawToVoltage(samples[i]) * rawToVoltage(samples[i]);
+  return sqrt(sum/16);
 }
 
 /*!
