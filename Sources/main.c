@@ -31,6 +31,13 @@
 #include "analog.h"
 #include "types.h"
 
+#include "PIT.h"
+#include "UART.h"
+#include "Packet.h"
+#include "Flash.h"
+#include "LEDs.h"
+
+
 // ----------------------------------------
 // Thread set up
 // ----------------------------------------
@@ -43,6 +50,7 @@ OS_THREAD_STACK(InitModulesThreadStack, THREAD_STACK_SIZE); /*!< The stack for t
 static uint32_t AnalogThreadStacks[NB_ANALOG_CHANNELS][THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));
 //-------         -----------------       --------------
 extern OS_ECB *PIT_Semaphore;           /*!< Binary semaphore for signaling PIT interrupt */
+OS_ECB *SemSamplesReady;
 
 //Thread declarations
 static void PacketCheckerThread(void* pData);
@@ -76,14 +84,14 @@ static uint16_t RMSChA, RMSChB, RMSChC;
 static void PITCallback(void* arg);
 
 //Packet Handling Functions
-{
+//{
   #define STARTUP_COMMAND 0x04
   #define READ_BYTE_COMMAND 0x08
   #define PROGRAM_BYTE_COMMAND 0x07
 
   #define TIMING_MODE_COMMAND 0x10
   #define NB_RAISES_COMMAND 0x11
-  #define NB_LOWER_COMMAND 0x12
+  #define NB_LOWERS_COMMAND 0x12
   #define FREQUENCY_COMMAND 0x17
   #define VOLTAGE_COMMAND 0x18
   #define SPECTRUM_COMMAND 0x19
@@ -237,7 +245,7 @@ static void PITCallback(void* arg);
 
     return true;
   }
-}
+//}
 //
 
 /*! @brief Data structure used to pass Analog configuration to a user thread
@@ -261,19 +269,19 @@ static TAnalogThreadData AnalogThreadData[NB_ANALOG_CHANNELS] =
   {  //Channel B in
     .semaphore = NULL,
     .channelNb = 1
-  }
+  },
   {  //Channel C in
     .semaphore = NULL,
     .channelNb = 2
-  }
+  },
   {  //Raise channel out
     .semaphore = NULL,
     .channelNb = 3
-  }
+  },
   {  //Lower channel out
     .semaphore = NULL,
     .channelNb = 4
-  }
+  },
   {  //Alarm channel out
     .semaphore = NULL,
     .channelNb = 5
@@ -285,6 +293,8 @@ static TAnalogThreadData AnalogThreadData[NB_ANALOG_CHANNELS] =
  */
 static void InitModulesThread(void* pData)
 {
+  SemSamplesReady = OS_SemaphoreCreate(0);
+
   // Analog
   (void)Analog_Init(CPU_BUS_CLK_HZ);
 
@@ -318,9 +328,9 @@ void AnalogLoopbackThread(void* pData)
 
 //Thread for sampling the channels
 void SamplingThread(void* pData){
-  Analog_Get(analogData->0, &SamplesChA[NbSamples]);
-  Analog_Get(analogData->1, &SamplesChB[NbSamples]);
-  Analog_Get(analogData->2, &SamplesChC[NbSamples++]);
+  Analog_Get(0, &SamplesChA[NbSamples]);
+  Analog_Get(1, &SamplesChB[NbSamples]);
+  Analog_Get(2, &SamplesChC[NbSamples++]);
 
   if(NbSamples == 16){
     OS_SemaphoreSignal(SemSamplesReady);
@@ -340,7 +350,7 @@ void RMSThread(void* pData){
     sumSqC += SamplesChC[i] * SamplesChC[i];
   }
 
-  RMSChA = (sumSqA/16)
+ // RMSChA = (sumSqA/16)
 
 
 
@@ -406,7 +416,7 @@ bool HandlePacket()
     if (ErrorStatus)
     {
       //LEDs_On(LED_BLUE);
-      PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
+      //PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
       //FTM_StartTimer(&PacketTimer);
     }
 
@@ -423,12 +433,14 @@ bool HandlePacket()
 
 void PITCallback(void* arg)
 {
+  /*
   Analog_Get(analogData->0, &SamplesChA[NbSamplesChA]);
   NbSamplesChA = (NbSamplesChA + 1) % 16;
   Analog_Get(analogData->1, &SamplesChB[NbSamplesChB]);
   NbSamplesChB = (NbSamplesChB + 1) % 16;
   Analog_Get(analogData->2, &SamplesChC[NbSamplesChC]);
   NbSamplesChB = (NbSamplesChB + 1) % 16;
+  */
 }
 
 /*!

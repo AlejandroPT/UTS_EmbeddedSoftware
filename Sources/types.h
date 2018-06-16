@@ -70,4 +70,18 @@ typedef union
   } dParts;
 } TFloat;
 
+
+// Union to efficiently access each byte in a Big Endian Long
+typedef union
+{
+  uint32_t l;
+  struct
+  {
+    uint8_t Byte4;
+    uint8_t Byte3;
+    uint8_t Byte2;
+    uint8_t Byte1;
+  } s;
+} uint32_8union_t;
+
 #endif

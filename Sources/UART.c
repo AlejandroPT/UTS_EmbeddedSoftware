@@ -108,7 +108,7 @@ void RxThread()
 
     FIFO_Put(&RxFIFO, UART2_D);             //Puts byte from UART2_D into RxFifo
 
-    OS_SemaphoreSignal(PacketSemaphore);    // Semaphore signals the packet semaphore
+    //OS_SemaphoreSignal(PacketSemaphore);    // Semaphore signals the packet semaphore
 
     UART2_C2 |= UART_C2_RIE_MASK;           // Enable RIE MASK for receive
   }
