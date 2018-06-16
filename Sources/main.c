@@ -74,12 +74,12 @@ volatile uint8_t *NbLowers;          //Number of lowers done
 int16union_t Frequency;    //Frecuency
 
 //Arrays to store the samples
-static uint16_t SamplesChA[16];
-static uint16_t SamplesChB[16];
-static uint16_t SamplesChC[16];
+static int16_t SamplesChA[16];
+static int16_t SamplesChB[16];
+static int16_t SamplesChC[16];
 static uint8_t NbSamples = 0;
 
-static uint16_t RMSChA, RMSChB, RMSChC;
+static int16_t RMSChA, RMSChB, RMSChC;
 
 static void PITCallback(void* arg);
 
@@ -350,7 +350,9 @@ void RMSThread(void* pData){
     sumSqC += SamplesChC[i] * SamplesChC[i];
   }
 
- // RMSChA = (sumSqA/16)
+  RMSChA = (int16_t)srqt(sumSqA/16);
+  RMSChB = (int16_t)srqt(sumSqB/16);
+  RMSChC = (int16_t)srqt(sumSqC/16);
 
 
 
