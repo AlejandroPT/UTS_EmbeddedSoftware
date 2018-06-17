@@ -20,17 +20,13 @@ static void* PITUserArguments;
 static void (*PITCallbackFunction)(void*);
 
 // PIT semaphore
-OS_ECB *PITSemaphore;
-
-//Arrays to store the samples, they are also used in main
-uint16_t SamplesChA[16];
-uint16_t SamplesChB[16];
-uint16_t SamplesChC[16];
-uint8_t NbSamplesChA, NbSamplesChB, NbSamplesChC = 0;
+OS_ECB *PIT0Semaphore;
+OS_ECB *PIT1Semaphore;
 
 bool PIT_Init(const uint32_t moduleClk, void (*userFunction)(void*), void* userArguments)
 {
-  PITSemaphore = OS_SemaphoreCreate(0);
+  PIT0Semaphore = OS_SemaphoreCreate(0);
+  PIT1Semaphore = OS_SemaphoreCreate(0);
 
   //PITCallbackFunction = userFunction;
   //PITUserArguments = userArguments;
@@ -43,42 +39,86 @@ bool PIT_Init(const uint32_t moduleClk, void (*userFunction)(void*), void* userA
   PIT_MCR |= PIT_MCR_FRZ_MASK;             //Timers are stopped in Debug Mode
 
   PIT_TCTRL0 |= PIT_TCTRL_TIE_MASK;        //Enable PIT interrupts
+  PIT_TCTRL1 |= PIT_TCTRL_TIE_MASK;        //Enable PIT interrupts
 
   NVICICPR2 = (1<<(68 % 32));              //Clear any pending interrupts on PIT Channel 0
   NVICISER2 = (1<<(68 % 32));              //Enable PIT Channel 0 interrupts
 
+  NVICICPR2 = (1<<(69 % 32));              //Clear any pending interrupts on PIT Channel 0
+  NVICISER2 = (1<<(69 % 32));              //Enable PIT Channel 0 interrupts
+
   return true;
 }
 
-void PIT_Set(const uint64_t period, const bool restart)
+void PIT_Set(const uint8_t channelNb, const uint64_t period, const bool restart)
 {
-    if (restart)
-      PIT_Enable(false);      //Disable the timer
-    int64_t temp = (period/ModulePeriodNanoSec);
-    int64_t temp1 = PIT_LDVAL0;
-    PIT_LDVAL0 = (period/ModulePeriodNanoSec) - 1;
-    int64_t temp2 = PIT_LDVAL0;
+  swith(channelNb)
+  {
+    case 0:
+      if (restart)
+        PIT_Enable(channelNb, false);      //Disable the timer
+      int64_t temp = (period/ModulePeriodNanoSec);
+      int64_t temp1 = PIT_LDVAL0;
+      PIT_LDVAL0 = (period/ModulePeriodNanoSec) - 1;
+      int64_t temp2 = PIT_LDVAL0;
 
-    if (restart)
-      PIT_Enable(true);      //Re-Enable the timer
-    PIT_TCTRL0 |= PIT_TCTRL_TIE_MASK;        //Enable PIT interrupts
+      if (restart)
+        PIT_Enable(channelNb, true);      //Re-Enable the timer
+      PIT_TCTRL0 |= PIT_TCTRL_TIE_MASK;        //Enable PIT interrupts
+      break;
+    case 1:
+      if (restart)
+        PIT_Enable(channelNb, false);      //Disable the timer
+      int64_t temp = (period/ModulePeriodNanoSec);
+      int64_t temp1 = PIT_LDVAL1;
+      PIT_LDVAL1 = (period/ModulePeriodNanoSec) - 1;
+      int64_t temp2 = PIT_LDVAL1;
+
+      if (restart)
+        PIT_Enable(channelNb, true);      //Re-Enable the timer
+      PIT_TCTRL1 |= PIT_TCTRL_TIE_MASK;        //Enable PIT interrupts
+      break;
+  }
 }
 
-void PIT_Enable(const bool enable){
-  if (enable)
-    PIT_TCTRL0 |= PIT_TCTRL_TEN_MASK;       //Enable the timer
-  else
-    PIT_TCTRL0 &= ~PIT_TCTRL_TEN_MASK;      //Disable the timer
+void PIT_Enable(const uint8_t channelNb, const bool enable)
+{
+  switch(channelNb)
+  {
+    case 0:
+      if (enable)
+        PIT_TCTRL0 |= PIT_TCTRL_TEN_MASK;       //Enable the timer
+      else
+        PIT_TCTRL0 &= ~PIT_TCTRL_TEN_MASK;      //Disable the timer
+      break;
+    case 1:
+      if (enable)
+        PIT_TCTRL1 |= PIT_TCTRL_TEN_MASK;       //Enable the timer
+      else
+        PIT_TCTRL1 &= ~PIT_TCTRL_TEN_MASK;      //Disable the timer
+      break;
+  }
 }
 
-
-void __attribute__ ((interrupt)) PIT_ISR(void){
+void __attribute__ ((interrupt)) PIT0_ISR(void)
+{
   OS_ISREnter();
 
   PIT_TFLG0 |= PIT_TFLG_TIF_MASK;       //Clear interrupt Flag (w1c)
-  if (PITCallbackFunction)
-      (*PITCallbackFunction)(PITUserArguments);     //Calls the RTC ISR callback function
-  OS_SemaphoreSignal(PITSemaphore);
+  // if (PITCallbackFunction)
+  //     (*PITCallbackFunction)(PITUserArguments);     //Calls the RTC ISR callback function
+  OS_SemaphoreSignal(PIT0Semaphore);
+
+  OS_ISRExit();
+}
+
+void __attribute__ ((interrupt)) PIT1_ISR(void)
+{
+  OS_ISREnter();
+
+  PIT_TFLG1 |= PIT_TFLG_TIF_MASK;       //Clear interrupt Flag (w1c)
+
+  OS_SemaphoreSignal(PIT1Semaphore);
 
   //if (PITCallbackFunction)
     //(*PITCallbackFunction)(PITUserArguments);     //Calls the RTC ISR callback function

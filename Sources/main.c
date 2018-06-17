@@ -49,14 +49,25 @@
 #define RAISE 1
 #define LOWER 2
 
+#define CHA 0
+#define CHB 1
+#define CHC 2
+
 const static double LO_TRESHHOLD = 2.00;
 const static double HI_TRESHHOLD = 3.00;
+
+//Variables for keeping track of each raise or lower
+static bool Raise = false;
+static bool Lower = false;
+static uint8_t RaiseTimer = 0;          //timing counter to know when to shut off trigger
+static uint8_t LowerTimer = 0;
 
 // Thread stacks
 OS_THREAD_STACK(InitModulesThreadStack, THREAD_STACK_SIZE); /*!< The stack for the LED Init thread. */
 static uint32_t AnalogThreadStacks[NB_ANALOG_CHANNELS][THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));
 //-------         -----------------       --------------
-extern OS_ECB *PIT_Semaphore;           /*!< Binary semaphore for signaling PIT interrupt */
+extern OS_ECB *PIT0_Semaphore;           /*!< Binary semaphore for signaling PIT0 interrupt */
+extern OS_ECB *PIT1_Semaphore;           /*!< Binary semaphore for signaling PIT1 interrupt */
 OS_ECB *SamplesReadySem;
 OS_ECB *AlarmEventSem;
 
@@ -79,7 +90,10 @@ volatile uint8_t *Timing_Mode;       //1 definitive, 2 inverse
 volatile uint8_t *NbRaises;          //Number of raises done
 volatile uint8_t *NbLowers;          //Number of lowers done
 //TODO Check if it is fine to store NbRaises and NbLowers in s single byte
-int16union_t Frequency;    //Frecuency
+int16union_t FrequencyInt;    //Frecuency
+float = Frequency;
+float = PeriodNs;
+float = SamplingRate;
 
 static void PITCallback(void* arg);
 
@@ -327,19 +341,27 @@ void SamplingThread(void* pData){
     Analog_Get(threadData->channelNb, &inputValue);
     threadData->samples[nbSamples++] = inputValue;
 
+    FrequencyTracking(nbSamples);
+
     if(nbSamples == 16){
       threadData->nbSamples = 0;                           //Resets the amount of samples taken
       threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
 
       if(threadData->rms > HI_TRESHHOLD){
+        threadData->deviation = HI_TRESHHOLD - threadData->rms;
         threadData->alarm = 1;
         threadData->trigCount = 0;
-        Analog_Put(ALARM, voltageToRaw(5.00));
+        PIT_Enable(1, true);
       }
       else if(threadData->rms < LO_TRESHHOLD){
+        threadData->deviation = threadData->rms - HI_TRESHHOLD;
         threadData->alarm = 2;
         threadData->trigCount = 0;
-        Analog_Put(ALARM, voltageToRaw(5.00));
+        PIT_Enable(1, true);
+      }
+      else
+      {
+        threadData->alarm = 0;
       }
     }
   }
@@ -355,6 +377,91 @@ void PIT0Thread(void* data)
     // Signal the analog channels to take a sample
     for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
       (void)OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
+  }
+}
+
+void PIT1Thread(void* data)
+{
+  for (;;)
+  {
+    OS_SemaphoreWait(PIT1Semaphore, 0);       //Wait on PIT Semaphore
+
+    bool alarm = false;
+    // Signal the analog channels to take a sample
+    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
+    {
+      if(ChannelData[analogNb].alarm != 0)
+      {
+        if(*Timing_Mode == 2)    //If mode is in inverse, do calculation, else add 5 to counter to make it trigger in 5 seconds
+        {
+          double tempCount = 25.0 / (0.5 / ChannelData[analogNb].deviation * 5);   //Calculation to see how much to increment in timer considerering a 100Hz interrupt
+
+          if(tempCount > 25.0)   //Adjust if delay is going to be less than 1 second
+            tempCount = 25.0;
+
+          if(tempCount < 1)   //Adjust if deviation is so small no increment will be given, max delay is 25 seconds
+            tempCount = 1.0;
+
+          ChannelData[analogNb].trigCount += uint16_t(tempCount);
+        }
+        else
+          ChannelData[analogNb].trigCount += 5;
+
+        //If elapsed time has occured
+        if(ChannelData[analogNb].trigCount >= 2500)
+        {
+          //If signal was above threshold, trigger a lower
+          if(ChannelData[analogNb].alarm == 1)
+          {
+            Lower = true;
+            *NbLowers++;
+            LowerTimer = 0;
+            Analog_Put(LOWER, voltageToRaw(5));
+          }
+          //If signal was below threshold, trigger a raise
+          if(ChannelData[analogNb].alarm == 2)
+          {
+            Raise = true;
+            *NbRaises++;
+            RaiseTimer = 0;
+            Analog_Put(RAISE, voltageToRaw(5));
+          }
+          ChannelData[analogNb].alarm = 0;           //Reset counter
+        }
+        else
+          ChannelData[analogNb].trigCount++;
+      }
+
+      alarm += ChannelData[analogNb].alarm;   //result should be 0 (false) if all alarm are off
+
+    }
+
+    if(Lower)
+    {
+      if(++LowerTimer >= 100)                      //Check if 1 sec has elapsed, if so, turn of trigger
+      {
+        Analog_Put(LOWER, voltageToRaw(0));
+        Lower = false;
+      }
+    }
+    if(Raise)
+    {
+      if(++RaiseTimer >= 100)                      //Check if 1 sec has elapsed, if so, turn of trigger
+      {
+        Analog_Put(RAISE, voltageToRaw(0));
+        Raise = false;
+      }
+    }
+
+    //If the alarm is triggered, set it on. Else turn it off
+    if (alarm)
+      Analog_Put(ALARM, voltageToRaw(5.0));
+    else
+      Analog_Put(ALARM, voltageToRaw(0.0));
+
+    //If no alarm, raise of lower is going on, turn of the PIT1 timer
+    if (!(alarm || Lower || Raise))
+      PIT_Enable(1, false);
   }
 }
 
@@ -476,6 +583,45 @@ double rmsCalc(int16_t samples[16])
   for(uint8_t i = 0; i < 16; i++)
     sum = rawToVoltage(samples[i]) * rawToVoltage(samples[i]);
   return sqrt(sum/16);
+}
+
+void FrequencyTracking(uint8_t index)
+{
+  static float offset1 = 0;
+  static float offset2 = 0;
+  static float spaceBetweenOffsets = 0;
+
+  float sample1, sample2;
+
+  //Check that index -1 will be valid, if not get the previous sample (sample 16)
+  if (index > 0)
+    sample1 = rawToVoltage(ChannelData[CHA].samples[15]);
+  else
+    sample1 = rawToVoltage(ChannelData[CHA].samples[index - 1]);
+
+  sample2 = rawToVoltage(ChannelData[CHA].samples[index]);
+
+  //If there is a  positive crossing through 0V
+  if (sample1 < 0 && sample2 > 0))
+  {
+    offset1 = (-sample1) / (sample2 - sample1);      //calculate the offset in fractions between samples
+    spaceBetweenOffsets = 0;                         //Reset the space between offsets
+  }
+  //If there is a  negative crossing through 0V
+  else if (sample1 > 0 && sample2 < 0))
+  {
+    offset2 = (-sample1) / (sample2 - sample1);      //calculate the offset in fractions between samples
+    double newPeriodNs = ((spaceBetweenOffsets - offset1 + offset2)) / 8 * PeriodNs); // Period of wave in s
+    double newFreq = 1.0  / (newPeriodNs / 1000000000);
+    if (frequency >= 47.5 && frequency <= 52.5)
+    {
+      Frequency = newFreq;                           //Update global frequency
+      PeriodNs = (1 / Frequency) * 1000000000;
+      SamplingRate = PeriodNs / 16;
+      PIT_Set(0, SamplingRate, true);                //Redefine PIT period and restart
+    }
+  }
+  spaceBetweenOffsets++;
 }
 
 /*!
