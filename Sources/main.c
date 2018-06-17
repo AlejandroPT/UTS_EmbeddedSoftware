@@ -71,11 +71,13 @@ extern OS_ECB *PIT1_Semaphore;           /*!< Binary semaphore for signaling PIT
 OS_ECB *SamplesReadySem;
 OS_ECB *AlarmEventSem;
 
-//Thread declarations
-static void PacketCheckerThread(void* pData);
-
 //Stacks
-static uint32_t PacketCheckerThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+static uint32_t PacketThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+static uint32_t PIT0ThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+static uint32_t PIT1ThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+static uint32_t RxThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+static uint32_t TxThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
+
 
 //-------         -----------------       --------------
 
@@ -94,6 +96,8 @@ int16union_t FrequencyInt;    //Frecuency
 float = Frequency;
 float = PeriodNs;
 float = SamplingRate;
+
+const static uint64_t PIT1_RATE = 10000000;  //100Hz
 
 static void PITCallback(void* arg);
 
@@ -280,7 +284,7 @@ typedef struct AnalogThreadData
 /*! @brief Analog thread configuration data
  *
  */
-static ChannelData ChannelData[NB_ANALOG_CHANNELS] =
+static TAnalogThreadData ChannelData[NB_ANALOG_CHANNELS] =
 {
   {  //Channel A in
     .semaphore = NULL,
@@ -316,15 +320,26 @@ static ChannelData ChannelData[NB_ANALOG_CHANNELS] =
  */
 static void InitModulesThread(void* pData)
 {
-  SamplesReadySem = OS_SemaphoreCreate(0);
-  AlarmEventSem = OS_SemaphoreCreate(0);
 
+  Frequency = 50;
+  PeriodNs = (1 / Frequency) * 1000000000;
+  SamplingRate = PeriodNs / 16;
   // Analog
   (void)Analog_Init(CPU_BUS_CLK_HZ);
+  LEDs_Init();
+  if(Packet_Init(BAUD_RATE, CPU_BUS_CLK_HZ))
+    LEDs_On(LED_ORANGE);
+  Flash_Init();
+  PIT_Init(CPU_BUS_CLK_HZ, PITCallback, NULL);
+
+  PIT_Set(0, (uint64_t)SamplingRate, true);
+  PIT_Set(0, PIT1_RATE, true);
+  PIT_Enable(0, false);               //Make sure its not on at start, only when needed
+
 
   // Generate the global analog semaphores
   for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
-    AnalogThreadData[analogNb].semaphore = OS_SemaphoreCreate(0);
+    ChannelData[analogNb].semaphore = OS_SemaphoreCreate(0);
 
   // We only do this once - therefore delete this thread
   OS_ThreadDelete(OS_PRIORITY_SELF);
@@ -341,7 +356,8 @@ void SamplingThread(void* pData){
     Analog_Get(threadData->channelNb, &inputValue);
     threadData->samples[nbSamples++] = inputValue;
 
-    FrequencyTracking(nbSamples);
+    if (threadData->channelNb == 0)
+      FrequencyTracking(nbSamples);
 
     if(nbSamples == 16){
       threadData->nbSamples = 0;                           //Resets the amount of samples taken
@@ -465,6 +481,18 @@ void PIT1Thread(void* data)
   }
 }
 
+void PacketThread(void* data)
+{
+  SendStartupPacket();
+  for (;;)
+  {
+    if (Packet_Get()) //Check if there is a packet in the retrieved data
+    {
+      HandlePacket();
+    }
+  }
+}
+
 /*lint -save  -e970 Disable MISRA rule (6.3) checking. */
 int main(void)
 /*lint -restore Enable MISRA rule (6.3) checking. */
@@ -483,14 +511,39 @@ int main(void)
                           &InitModulesThreadStack[THREAD_STACK_SIZE - 1],
                           0); // Highest priority
 
+  error = OS_ThreadCreate(RxThread,
+                          NULL,
+                          &RxThreadStack[THREAD_STACK_SIZE-1],
+                          1);
+
+  error = OS_ThreadCreate(TxThread,
+                          NULL,
+                          &TxThreadStack[THREAD_STACK_SIZE-1],
+                          2);
+
   // Create threads for analog loopback channels
   for (uint8_t threadNb = 0; threadNb < NB_ANALOG_CHANNELS; threadNb++)
   {
-    error = OS_ThreadCreate(AnalogLoopbackThread,
-                            &AnalogThreadData[threadNb],
+    error = OS_ThreadCreate(SamplingThread,
+                            &ChannelData[threadNb],
                             &AnalogThreadStacks[threadNb][THREAD_STACK_SIZE - 1],
                             ANALOG_THREAD_PRIORITIES[threadNb]);
   }
+
+  error = OS_ThreadCreate(PIT0Thread,
+                          NULL,
+                          &PIT0ThreadStack[THREAD_STACK_SIZE-1],
+                          6);
+
+  error = OS_ThreadCreate(PIT1Thread,
+                          NULL,
+                          &PIT1ThreadStack[THREAD_STACK_SIZE-1],
+                          7);
+
+  error = OS_ThreadCreate(PacketThread,
+                          NULL,
+                          &PacketThreadStack[THREAD_STACK_SIZE-1],
+                          8);
 
   // Start multithreading - never returns!
   OS_Start();
@@ -504,37 +557,35 @@ bool HandlePacket()
 {
   bool ErrorStatus = false;
 
-  if (Packet_Get()){
-    switch(Packet_Command & ~PACKET_ACK_MASK){
-      case STARTUP_COMMAND:
-    	  ErrorStatus = HandleStartupPacket();
-    	  break;
+  switch(Packet_Command & ~PACKET_ACK_MASK){
+    case STARTUP_COMMAND:
+  	  ErrorStatus = HandleStartupPacket();
+  	  break;
 
-      case PROGRAM_BYTE_COMMAND:
-        ErrorStatus = HandleReadBytePacket();
-        break;
+    case PROGRAM_BYTE_COMMAND:
+      ErrorStatus = HandleReadBytePacket();
+      break;
 
-      case READ_BYTE_COMMAND:
-        ErrorStatus = HandleProgramBytePacket();
-        break;
+    case READ_BYTE_COMMAND:
+      ErrorStatus = HandleProgramBytePacket();
+      break;
 
-      default:
-	break;
-    }
+    default:
+      break;
+  }
 
+  if (ErrorStatus)
+  {
+    //LEDs_On(LED_BLUE);
+    //PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
+    //FTM_StartTimer(&PacketTimer);
+  }
+
+  if (Packet_Command & PACKET_ACK_MASK) {  //Check if an ACK is required, and send it (or the NACK)
     if (ErrorStatus)
-    {
-      //LEDs_On(LED_BLUE);
-      //PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
-      //FTM_StartTimer(&PacketTimer);
-    }
-
-    if (Packet_Command & PACKET_ACK_MASK) {  //Check if an ACK is required, and send it (or the NACK)
-      if (ErrorStatus)
-	      Packet_Put(Packet_Command, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
-      else
-	      Packet_Put(Packet_Command & ~PACKET_ACK_MASK, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
-    }
+      Packet_Put(Packet_Command, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
+    else
+      Packet_Put(Packet_Command & ~PACKET_ACK_MASK, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
   }
 
   return ErrorStatus;
@@ -574,7 +625,6 @@ int16_t voltageToRaw(double voltage)
 
 /*!
  * @brief Converts 16 analog samples into RMS voltage
- *
  * @return double - voltage value
  */
 double rmsCalc(int16_t samples[16])
@@ -585,6 +635,9 @@ double rmsCalc(int16_t samples[16])
   return sqrt(sum/16);
 }
 
+/*!
+ * @brief Gets a frequency by interpolating the places where the wave crosses 0, and calculating the error to the current sampling rate
+ */
 void FrequencyTracking(uint8_t index)
 {
   static float offset1 = 0;

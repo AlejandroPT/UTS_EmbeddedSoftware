@@ -16,7 +16,6 @@ OS_ECB *TxSemaphore;
 OS_ECB *RxSemaphore;
 
 
-
 bool UART_Init(const uint32_t baudRate, const uint32_t moduleClk)
 {
   TxSemaphore = OS_SemaphoreCreate(0);
