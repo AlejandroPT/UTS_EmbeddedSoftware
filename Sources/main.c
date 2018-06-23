@@ -45,6 +45,8 @@
 #define THREAD_STACK_SIZE 100
 #define NB_ANALOG_CHANNELS 3
 
+#define BAUD_RATE 115200
+
 #define ALARM 3
 #define RAISE 1
 #define LOWER 2
@@ -71,6 +73,7 @@ extern OS_ECB *PIT1_Semaphore;           /*!< Binary semaphore for signaling PIT
 OS_ECB *SamplesReadySem;
 OS_ECB *AlarmEventSem;
 
+
 //Stacks
 static uint32_t PacketThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
 static uint32_t PIT0ThreadStack[THREAD_STACK_SIZE] __attribute__ ((aligned(0x08)));   /*!< The stack for the packet checking thread. */
@@ -93,16 +96,19 @@ volatile uint8_t *NbRaises;          //Number of raises done
 volatile uint8_t *NbLowers;          //Number of lowers done
 //TODO Check if it is fine to store NbRaises and NbLowers in s single byte
 int16union_t FrequencyInt;    //Frecuency
-float = Frequency;
-float = PeriodNs;
-float = SamplingRate;
+static float Frequency;
+static float PeriodNs;
+static float SamplingRate;
 
 const static uint64_t PIT1_RATE = 10000000;  //100Hz
 
 static void PITCallback(void* arg);
+double rmsCalc(int16_t samples[16]);
+int16_t voltageToRaw(double voltage);
+void FrequencyTracking(uint8_t index);
 
 //Packet Handling Functions
-{
+//{
   #define STARTUP_COMMAND 0x04
   #define READ_BYTE_COMMAND 0x08
   #define PROGRAM_BYTE_COMMAND 0x07
@@ -263,7 +269,48 @@ static void PITCallback(void* arg);
 
     return true;
   }
-}
+  /*! @brief Checks for new packages and handles them depending on the comand.
+   *
+   *  @return bool - TRUE if data is correct and corresponds to the packet.
+   */
+  bool HandlePacket()
+  {
+    bool ErrorStatus = false;
+
+    switch(Packet_Command & ~PACKET_ACK_MASK){
+      case STARTUP_COMMAND:
+        ErrorStatus = HandleStartupPacket();
+        break;
+
+      case PROGRAM_BYTE_COMMAND:
+        ErrorStatus = HandleReadBytePacket();
+        break;
+
+      case READ_BYTE_COMMAND:
+        ErrorStatus = HandleProgramBytePacket();
+        break;
+
+      default:
+        break;
+    }
+
+    if (ErrorStatus)
+    {
+      //LEDs_On(LED_BLUE);
+      //PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
+      //FTM_StartTimer(&PacketTimer);
+    }
+
+    if (Packet_Command & PACKET_ACK_MASK) {  //Check if an ACK is required, and send it (or the NACK)
+      if (ErrorStatus)
+        Packet_Put(Packet_Command, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
+      else
+        Packet_Put(Packet_Command & ~PACKET_ACK_MASK, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
+    }
+
+    return ErrorStatus;
+  }
+//}
 //
 
 /*! @brief Data structure used to pass Analog configuration to a user thread
@@ -349,8 +396,8 @@ static void InitModulesThread(void* pData)
 void SamplingThread(void* pData){
   #define threadData ((TAnalogThreadData*) pData)
   int16_t inputValue;
-  uint8_t nbSamples = 0
-  for(;;){
+  uint8_t nbSamples = 0;
+  for (;;){
     OS_SemaphoreWait(threadData->semaphore,0);
 
     Analog_Get(threadData->channelNb, &inputValue);
@@ -360,7 +407,7 @@ void SamplingThread(void* pData){
       FrequencyTracking(nbSamples);
 
     if(nbSamples == 16){
-      threadData->nbSamples = 0;                           //Resets the amount of samples taken
+      nbSamples = 0;                                       //Resets the amount of samples taken
       threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
 
       if(threadData->rms > HI_TRESHHOLD){
@@ -388,11 +435,11 @@ void PIT0Thread(void* data)
 {
   for (;;)
   {
-    OS_SemaphoreWait(PIT0Semaphore, 0);       //Wait on PIT Semaphore
+    OS_SemaphoreWait(PIT0_Semaphore, 0);       //Wait on PIT Semaphore
 
     // Signal the analog channels to take a sample
     for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
-      (void)OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
+      OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
   }
 }
 
@@ -400,7 +447,7 @@ void PIT1Thread(void* data)
 {
   for (;;)
   {
-    OS_SemaphoreWait(PIT1Semaphore, 0);       //Wait on PIT Semaphore
+    OS_SemaphoreWait(PIT1_Semaphore, 0);       //Wait on PIT Semaphore
 
     bool alarm = false;
     // Signal the analog channels to take a sample
@@ -418,7 +465,7 @@ void PIT1Thread(void* data)
           if(tempCount < 1)   //Adjust if deviation is so small no increment will be given, max delay is 25 seconds
             tempCount = 1.0;
 
-          ChannelData[analogNb].trigCount += uint16_t(tempCount);
+          ChannelData[analogNb].trigCount += (uint16_t)(tempCount);
         }
         else
           ChannelData[analogNb].trigCount += 5;
@@ -549,47 +596,6 @@ int main(void)
   OS_Start();
 }
 
-/*! @brief Checks for new packages and handles them depending on the comand.
- *
- *  @return bool - TRUE if data is correct and corresponds to the packet.
- */
-bool HandlePacket()
-{
-  bool ErrorStatus = false;
-
-  switch(Packet_Command & ~PACKET_ACK_MASK){
-    case STARTUP_COMMAND:
-  	  ErrorStatus = HandleStartupPacket();
-  	  break;
-
-    case PROGRAM_BYTE_COMMAND:
-      ErrorStatus = HandleReadBytePacket();
-      break;
-
-    case READ_BYTE_COMMAND:
-      ErrorStatus = HandleProgramBytePacket();
-      break;
-
-    default:
-      break;
-  }
-
-  if (ErrorStatus)
-  {
-    //LEDs_On(LED_BLUE);
-    //PacketTimer.ioType.inputDetection = TIMER_OUTPUT_HIGH;
-    //FTM_StartTimer(&PacketTimer);
-  }
-
-  if (Packet_Command & PACKET_ACK_MASK) {  //Check if an ACK is required, and send it (or the NACK)
-    if (ErrorStatus)
-      Packet_Put(Packet_Command, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
-    else
-      Packet_Put(Packet_Command & ~PACKET_ACK_MASK, Packet_Parameter1, Packet_Parameter2, Packet_Parameter3);
-  }
-
-  return ErrorStatus;
-}
 
 void PITCallback(void* arg)
 {
@@ -632,7 +638,7 @@ double rmsCalc(int16_t samples[16])
   double sum = 0;
   for(uint8_t i = 0; i < 16; i++)
     sum = rawToVoltage(samples[i]) * rawToVoltage(samples[i]);
-  return sqrt(sum/16);
+  return (double)sqrt(sum/16);
 }
 
 /*!
@@ -655,18 +661,18 @@ void FrequencyTracking(uint8_t index)
   sample2 = rawToVoltage(ChannelData[CHA].samples[index]);
 
   //If there is a  positive crossing through 0V
-  if (sample1 < 0 && sample2 > 0))
+  if (sample1 < 0 && sample2 > 0)
   {
     offset1 = (-sample1) / (sample2 - sample1);      //calculate the offset in fractions between samples
     spaceBetweenOffsets = 0;                         //Reset the space between offsets
   }
   //If there is a  negative crossing through 0V
-  else if (sample1 > 0 && sample2 < 0))
+  else if (sample1 > 0 && sample2 < 0)
   {
     offset2 = (-sample1) / (sample2 - sample1);      //calculate the offset in fractions between samples
-    double newPeriodNs = ((spaceBetweenOffsets - offset1 + offset2)) / 8 * PeriodNs); // Period of wave in s
+    double newPeriodNs = ((spaceBetweenOffsets - offset1 + offset2) / 8 * PeriodNs); // Period of wave in s
     double newFreq = 1.0  / (newPeriodNs / 1000000000);
-    if (frequency >= 47.5 && frequency <= 52.5)
+    if (newFreq >= 47.5 && newFreq <= 52.5)
     {
       Frequency = newFreq;                           //Update global frequency
       PeriodNs = (1 / Frequency) * 1000000000;

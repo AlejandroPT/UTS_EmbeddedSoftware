@@ -54,4 +54,16 @@ void UART_Poll(void);
  */
 void __attribute__ ((interrupt)) UART_ISR(void);
 
+/*! @brief Thread for handling the transmision of packages
+ *
+ *  @note Assumes the transmit and receive FIFOs have been initialized.
+ */
+void TxThread();
+
+/*! @brief Thread for handling the reception of packages
+ *
+ *  @note Assumes the transmit and receive FIFOs have been initialized.
+ */
+void RxThread();
+
 #endif
