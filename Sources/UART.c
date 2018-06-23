@@ -44,6 +44,7 @@ bool UART_Init(const uint32_t baudRate, const uint32_t moduleClk)
 
   //interrupts
   UART2_C2 |= UART_C2_RIE_MASK; // Enable receive interrupt
+  UART2_C2 |= UART_C2_TIE_MASK; // Enable transmit interrupt
 
   NVICICPR1 = (1<<(49 % 32));   // Clear any pending error status sources interrupts on UART2
   NVICISER1 = (1<<(49 % 32));   // Enable error status sources interrupts from UART2
@@ -61,9 +62,9 @@ bool UART_InChar(uint8_t * const dataPtr)
 
 bool UART_OutChar(const uint8_t data)
 {
-  UART2_C2 &= ~UART_C2_TIE_MASK;         //Disable the transmit interrupt
+  //UART2_C2 &= ~UART_C2_TIE_MASK;         //Disable the transmit interrupt
   bool result = FIFO_Put(&TxFIFO, data);
-  UART2_C2 |= UART_C2_TIE_MASK;          //Enable the transmit interrupt
+  //UART2_C2 |= UART_C2_TIE_MASK;          //Enable the transmit interrupt
   return result;
 }
 
@@ -92,7 +93,7 @@ void TxThread()
 
     UART2_D = txData;                        //Write into UART2_D register
 
-    UART2_C2 |= UART_C2_TCIE_MASK;           //Enable TCIE MASK
+    UART2_C2 |= UART_C2_TIE_MASK;           //Enable TIE MASK
   }
 }
 
@@ -117,6 +118,7 @@ void __attribute__ ((interrupt)) UART_ISR(void)
 {
   OS_ISREnter();
 
+  uint8_t temp = 0;
   // Receive a character
   if (UART2_C2 & UART_C2_RIE_MASK)       //Check if receive flag is set
   {
@@ -129,13 +131,13 @@ void __attribute__ ((interrupt)) UART_ISR(void)
   }
 
   // Transmit a character
-  if (UART2_C2 & UART_C2_TCIE_MASK)      //Check if tranmist flag is set
+  if (UART2_C2 & UART_C2_TIE_MASK)      //Check if tranmit flag is set
   {
-    if (UART2_S1 & UART_S1_TC_MASK)      //Clear TDRE flag by reading the status register
+    if (UART2_S1 & UART_S1_TDRE_MASK)      //Clear TDRE flag by reading the status register
     {
       OS_SemaphoreSignal(TxSemaphore);   //Semaphore signals the receive
 
-      UART2_C2 &= ~UART_C2_TCIE_MASK;    //Disable TCIE after bytes have been transmitted
+      UART2_C2 &= ~UART_C2_TIE_MASK;    //Disable TCIE after bytes have been transmitted
     }
   }
 

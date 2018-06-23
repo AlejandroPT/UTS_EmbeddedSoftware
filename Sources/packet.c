@@ -61,9 +61,9 @@ bool Packet_Get(void)
     case 4:
       // test the checksum
       if (PacketTest(uartData)) {
-	Position = 0;
-	ExitCritical();
-	return true;
+        Position = 0;
+        ExitCritical();
+        return true;
       }
       Packet_Command = Packet_Parameter1;
       Packet_Parameter1 = Packet_Parameter2;

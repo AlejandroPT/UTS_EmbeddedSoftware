@@ -52,6 +52,7 @@ void PIT_Enable(const uint8_t channelNb, const bool enable);
  *  The user callback function will be called.
  *  @note Assumes the PIT has been initialized.
  */
-void __attribute__ ((interrupt)) PIT_ISR(void);
+void __attribute__ ((interrupt)) PIT0_ISR(void);
+void __attribute__ ((interrupt)) PIT1_ISR(void);
 
 #endif

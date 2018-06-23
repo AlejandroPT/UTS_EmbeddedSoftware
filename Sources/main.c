@@ -47,9 +47,9 @@
 
 #define BAUD_RATE 115200
 
-#define ALARM 3
-#define RAISE 1
-#define LOWER 2
+#define ALARM 2
+#define RAISE 0
+#define LOWER 1
 
 #define CHA 0
 #define CHB 1
@@ -380,8 +380,8 @@ static void InitModulesThread(void* pData)
   PIT_Init(CPU_BUS_CLK_HZ, PITCallback, NULL);
 
   PIT_Set(0, (uint64_t)SamplingRate, true);
-  PIT_Set(0, PIT1_RATE, true);
-  PIT_Enable(0, false);               //Make sure its not on at start, only when needed
+  PIT_Set(1, PIT1_RATE, true);
+  PIT_Enable(1, false);               //Make sure its not on at start, only when needed
 
 
   // Generate the global analog semaphores
@@ -637,7 +637,7 @@ double rmsCalc(int16_t samples[16])
 {
   double sum = 0;
   for(uint8_t i = 0; i < 16; i++)
-    sum = rawToVoltage(samples[i]) * rawToVoltage(samples[i]);
+    sum += rawToVoltage(samples[i]) * rawToVoltage(samples[i]);
   return (double)sqrt(sum/16);
 }
 
