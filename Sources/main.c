@@ -413,18 +413,17 @@ void SamplingThread(void* pData){
       if(threadData->rms > HI_TRESHHOLD){
         threadData->deviation = HI_TRESHHOLD - threadData->rms;
         threadData->alarm = 1;
-        threadData->trigCount = 0;
         PIT_Enable(1, true);
       }
       else if(threadData->rms < LO_TRESHHOLD){
         threadData->deviation = threadData->rms - HI_TRESHHOLD;
         threadData->alarm = 2;
-        threadData->trigCount = 0;
         PIT_Enable(1, true);
       }
       else
       {
         threadData->alarm = 0;
+        threadData->trigCount = 0;
       }
     }
   }
@@ -489,7 +488,7 @@ void PIT1Thread(void* data)
             RaiseTimer = 0;
             Analog_Put(RAISE, voltageToRaw(5));
           }
-          ChannelData[analogNb].alarm = 0;           //Reset counter
+          //ChannelData[analogNb].alarm = 0;           //Reset counter
         }
         else
           ChannelData[analogNb].trigCount++;
@@ -499,28 +498,15 @@ void PIT1Thread(void* data)
 
     }
 
-    if(Lower)
-    {
-      if(++LowerTimer >= 100)                      //Check if 1 sec has elapsed, if so, turn of trigger
-      {
-        Analog_Put(LOWER, voltageToRaw(0));
-        Lower = false;
-      }
-    }
-    if(Raise)
-    {
-      if(++RaiseTimer >= 100)                      //Check if 1 sec has elapsed, if so, turn of trigger
-      {
-        Analog_Put(RAISE, voltageToRaw(0));
-        Raise = false;
-      }
-    }
-
     //If the alarm is triggered, set it on. Else turn it off
     if (alarm)
       Analog_Put(ALARM, 16000);
-    else
+    else {
       Analog_Put(ALARM, voltageToRaw(0.0));
+      Analog_Put(RAISE, voltageToRaw(0.0));
+      Analog_Put(LOWER, voltageToRaw(0.0));
+      PIT_Enable(1, false);
+    }
 
     //If no alarm, raise of lower is going on, turn of the PIT1 timer
     if (!(alarm || Lower || Raise))
