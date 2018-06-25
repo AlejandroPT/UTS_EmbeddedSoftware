@@ -518,7 +518,7 @@ void PIT1Thread(void* data)
 
     //If the alarm is triggered, set it on. Else turn it off
     if (alarm)
-      Analog_Put(ALARM, voltageToRaw(5.0));
+      Analog_Put(ALARM, 16000);
     else
       Analog_Put(ALARM, voltageToRaw(0.0));
 
@@ -653,7 +653,7 @@ void FrequencyTracking(uint8_t index)
   float sample1, sample2;
 
   //Check that index -1 will be valid, if not get the previous sample (sample 16)
-  if (index > 0)
+  if (index == 0)
     sample1 = rawToVoltage(ChannelData[CHA].samples[15]);
   else
     sample1 = rawToVoltage(ChannelData[CHA].samples[index - 1]);
