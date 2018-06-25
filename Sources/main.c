@@ -63,6 +63,8 @@ static bool Raise = false;
 static bool Lower = false;
 static uint8_t RaiseTimer = 0;          //timing counter to know when to shut off trigger
 static uint8_t LowerTimer = 0;
+static bool Alarm = false;
+static bool Triggered = false;
 
 // Thread stacks
 OS_THREAD_STACK(InitModulesThreadStack, THREAD_STACK_SIZE); /*!< The stack for the LED Init thread. */
@@ -146,19 +148,19 @@ void FrequencyTracking(uint8_t index);
     if (!Flash_AllocateVar(&Timing_Mode, sizeof(*Timing_Mode)))  //Allocate the flash space for timing mode
       return false;
     if (*Timing_Mode == 0xFF)
-      if(!Flash_Write16((uint16_t *)Timing_Mode, 0x1))           //If flash is empty, use default value
+      if(!Flash_Write8(Timing_Mode, 0x01))           //If flash is empty, use default value
         return false;
 
     if (!Flash_AllocateVar(&NbRaises, sizeof(*NbRaises)))        //Allocate the flash space for number of raises
       return false;
     if (*NbRaises == 0xFF)
-      if(!Flash_Write16((uint16_t *)NbRaises, 0x0))              //If flash is empty, use default value
+      if(!Flash_Write8(NbRaises, 0x00))              //If flash is empty, use default value
         return false;
 
     if (!Flash_AllocateVar(&NbLowers, sizeof(*NbLowers)))        //Allocate the flash space for number of lowers
       return false;
     if (*NbLowers == 0xFF)
-      if (!Flash_Write16((uint16_t *)NbLowers, 0x0))             //If flash is empty, use default value
+      if (!Flash_Write8(NbLowers, 0x00))             //If flash is empty, use default value
         return false;
     return true;
   }
@@ -488,19 +490,24 @@ void PIT1Thread(void* data)
           if(ChannelData[analogNb].alarm == 1)
           {
             Lower = true;
-            *NbLowers++;
+
             LowerTimer = 0;
             Analog_Put(LOWER, voltageToRaw(5));
+            if(!Triggered)
+              Flash_Write8(NbLowers, *NbLowers+1);
           }
           //If signal was below threshold, trigger a raise
           if(ChannelData[analogNb].alarm == 2)
           {
             Raise = true;
-            *NbRaises++;
+
             RaiseTimer = 0;
             Analog_Put(RAISE, voltageToRaw(5));
+            if(!Triggered)
+              Flash_Write8(NbRaises, *NbRaises+1);
           }
           //ChannelData[analogNb].alarm = 0;           //Reset counter
+          Triggered = true;
         }
         else
           ChannelData[analogNb].trigCount++;
@@ -509,7 +516,7 @@ void PIT1Thread(void* data)
       alarm += ChannelData[analogNb].alarm;   //result should be 0 (false) if all alarm are off
 
     }
-
+    Alarm = alarm;
     //If the alarm is triggered, set it on. Else turn it off
     if (alarm)
       Analog_Put(ALARM, 16000);
@@ -518,6 +525,7 @@ void PIT1Thread(void* data)
       Analog_Put(RAISE, voltageToRaw(0.0));
       Analog_Put(LOWER, voltageToRaw(0.0));
       PIT_Enable(1, false);
+      Triggered = false;
     }
 
     //If no alarm, raise of lower is going on, turn of the PIT1 timer
