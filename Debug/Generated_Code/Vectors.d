@@ -6,9 +6,7 @@ Generated_Code/Vectors.o: ../Generated_Code/Vectors.c \
  C:\Users\13113117\Desktop\UTS_EmbeddedSoftware\Library/OS.h \
  C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/PIT.h \
  C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h \
- C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/UART.h \
- C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/FIFO.h \
- C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/CPU.h
+ C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/UART.h
 
 ../Generated_Code/Cpu.h:
 
@@ -29,7 +27,3 @@ C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/PIT.h:
 C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h:
 
 C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/UART.h:
-
-C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/FIFO.h:
-
-C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/CPU.h:

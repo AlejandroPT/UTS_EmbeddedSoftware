@@ -2,145 +2,179 @@
  *
  *  @brief I/O routines for UART communications on the TWR-K70F120M.
  *
- *  This contains the implementation of functions for operating the UART.
+ *  This contains the functions for operating the UART (serial port).
  *
- *  @author 11989668, 13113117
- *  @date 2018-04-04
+ *  @author Corey Stidston & Menka Mehta
+ *  @date 2017-04-18
  */
-#include "UART.h"
+/*!
+ * @addtogroup UART_module UART documentation
+ * @{
+ */
+/* MODULE UART */
+
+/****************************************HEADER FILES****************************************************/
+#include "FIFO.h"
+#include "types.h"
 #include "MK70F12.h"
+#include "OS.h"
+#include "UART.h"
+#include "Cpu.h"
+#include "packet.h"
 
-static TFIFO RxFIFO, TxFIFO;
+/****************************************GLOBAL VARS*****************************************************/
+static TFIFO RxFIFO;
+static TFIFO TxFIFO;
+OS_ECB *RxSemaphore; //Receive semaphore
+OS_ECB *TxSemaphore; //Transmit semaphore
 
-OS_ECB *TxSemaphore;
-OS_ECB *RxSemaphore;
+/****************************************PUBLIC FUNCTION DEFINITION***************************************/
 
-
+/*! @brief Sets up the UART interface before first use.
+ *
+ *  @param baudRate The desired baud rate in bits/sec.
+ *  @param moduleClk The module clock rate in Hz
+ *  @return bool - TRUE if the UART was successfully initialized.
+ */
 bool UART_Init(const uint32_t baudRate, const uint32_t moduleClk)
 {
+  // Create semaphores for Receive and Transmit threads
   TxSemaphore = OS_SemaphoreCreate(0);
   RxSemaphore = OS_SemaphoreCreate(0);
 
-  SIM_SCGC4 |= SIM_SCGC4_UART2_MASK;  //Enabling UART2
-  SIM_SCGC5 |= SIM_SCGC5_PORTE_MASK;  //Enabling PortE for pin routing
-  PORTE_PCR16 = PORT_PCR_MUX(3);     //Modifying the PortE register for the alt3 multiplex option (UART2_Tx) //only = because of the w1c
-  PORTE_PCR17 = PORT_PCR_MUX(3);     //Modifying the PortE register for the alt3 multiplex option (UART2_Rx)
+  FIFO_Init(&RxFIFO);         //Initialize the Receiving FIFO for usage
+  FIFO_Init(&TxFIFO);         //Initialize the Transmitting FIFO for usage
 
-  UART2_C2 &= ~UART_C2_RE_MASK;  //Enabling the Receiver Enable bit
-  UART2_C2 &= ~UART_C2_TE_MASK;  //Enabling the Transmitter Enable bit
+  uint8_t brfa;           //Baud rate fine adjustment variable
+  uint16union_t sbr;          //Variable used to hold baud rate value
 
-  // Setting the baud rate fine adjust
-  uint8_t fine_adjust = (uint8_t)(moduleClk * 2) / (baudRate) % 32;
-  UART2_C4 = (fine_adjust & 0x1F);
+  if (baudRate == 0) return false;    //Check whether the BaudRate is not set to zero to avoid a runtime error
 
-  // Requested baud rate setup
-  uint16union_t setting;				// Setting the unions to efficiently access high(Hi) and low(Lo) parts of integers and words
-  setting.l  = (uint16_t)(moduleClk/(baudRate * 16));	// Setting the baud rate which is synchronized with the module clock
-  UART2_BDH |= (uint8_t)(setting.s.Hi & 0x1F);		// Buffers the high half of the new value
-  UART2_BDL = (uint8_t)setting.s.Lo;			// Reset to a nonzero value (fraction of 4/32)
+  SIM_SCGC4 |= SIM_SCGC4_UART2_MASK;  //Enable UART module in SIM_SCGC4
+  SIM_SCGC5 |= SIM_SCGC5_PORTE_MASK;  //Enable Pin routing for Port E
 
-  UART2_C2 |= UART_C2_RE_MASK;  //Enabling the Receiver Enable bit
-  UART2_C2 |= UART_C2_TE_MASK;  //Enabling the Transmitter Enable bit
+  PORTE_PCR16 |= PORT_PCR_MUX(3);   //Set Pin16 to MUX mode Alternate 3
+  PORTE_PCR17 |= PORT_PCR_MUX(3);   //Set Pin17 to MUX mode Alternate 3
 
-  //interrupts
-  UART2_C2 |= UART_C2_RIE_MASK; // Enable receive interrupt
-  UART2_C2 |= UART_C2_TIE_MASK; // Enable transmit interrupt
+  UART2_C2 &= ~UART_C2_TE_MASK;   //Disable UART transmitter
+  UART2_C2 &= ~UART_C2_RE_MASK;   //Disable UART receiver
 
-  NVICICPR1 = (1<<(49 % 32));   // Clear any pending error status sources interrupts on UART2
-  NVICISER1 = (1<<(49 % 32));   // Enable error status sources interrupts from UART2
+  sbr.l = moduleClk / (baudRate * 16);//Set the baud rate
 
-  FIFO_Init(&RxFIFO);  //Initializing the RxFIFO
-  FIFO_Init(&TxFIFO);  //Initializing the TxFIFO
+  if (sbr.l > 0x1FFF) return false; //Check that the BaudRate is valid
 
-  return (setting.l != 0);
+  UART2_BDH = sbr.s.Hi;       //Set the high part of the BaudRate
+  UART2_BDL = sbr.s.Lo;       //Set the low part of the BaudRate
+
+  brfa = (uint8_t) ((moduleClk*2) / baudRate) % 32; //Calculate the BaudRate Find Adjust Value
+  UART2_C4 |= UART_C4_BRFA_MASK;    //Prepare the register
+  UART2_C4 &= brfa;       //Set the BaudRate Fine Adjust value
+
+  UART2_C2 |= UART_C2_TIE_MASK;  //Transmit interrupt Enable
+  UART2_C2 |= UART_C2_RIE_MASK;  //Receive interrupt Enable
+
+  UART2_C2 |= UART_C2_TE_MASK;    //Enables UART transmitter
+  UART2_C2 |= UART_C2_RE_MASK;    //Enables UART receiver
+
+  //Initialize NVIC
+  //SPRING 2017- Mid semester question pg 4
+  //pg 97/2275 - K70 Manual
+  NVICICPR1 = (1 << (49 % 32));
+  NVICISER1 = (1 << (49 % 32));
+
+  return true;
 }
 
-bool UART_InChar(uint8_t * const dataPtr)
-{
-  return FIFO_Get(&RxFIFO, dataPtr);
-}
-
-bool UART_OutChar(const uint8_t data)
-{
-  //UART2_C2 &= ~UART_C2_TIE_MASK;         //Disable the transmit interrupt
-  bool result = FIFO_Put(&TxFIFO, data);
-  //UART2_C2 |= UART_C2_TIE_MASK;          //Enable the transmit interrupt
-  return result;
-}
-
-void UART_Poll(void)
-{
-  if (UART2_S1 & UART_S1_TDRE_MASK)
-    FIFO_Get(&TxFIFO, &UART2_D); //sending
-
-  if (UART2_S1 & UART_S1_RDRF_MASK)
-    FIFO_Put(&RxFIFO, UART2_D); // receiving
-}
-
-/*! @brief UART transmit thread
- *  @return void
+/*! @brief Get a character from the receive FIFO if it is not empty.
+ *
+ *  @param dataPtr A pointer to memory to store the retrieved byte.
+ *  @return bool - TRUE if the receive FIFO returned a character.
+ *  @note Assumes that UART_Init has been called.
  */
-void TxThread()
+void UART_InChar(uint8_t * const dataPtr)
+{
+  //Get the data stored in RxFIFO and store it within the address given by dataPtr
+  FIFO_Get(&RxFIFO, dataPtr);
+}
+
+/*! @brief Put a byte in the transmit FIFO if it is not full.
+ *
+ *  @param data The byte to be placed in the transmit FIFO.
+ *  @return bool - TRUE if the data was placed in the transmit FIFO.
+ *  @note Assumes that UART_Init has been called.
+ */
+void UART_OutChar(const uint8_t data)
+{
+  FIFO_Put(&TxFIFO, data); //Place the value stored in data into the TxFIFO
+}
+
+/*! @brief The thread which handles the receiving of data
+ *
+ *  @param data
+ *  @note Assumes that UART_Init has been called.
+ */
+void RxThread(void *data)
+{
+  for(;;)
+  {
+    OS_SemaphoreWait(RxSemaphore, 0);
+    FIFO_Put(&RxFIFO, UART2_D);
+    // Something in RxFIFO, Let Packet Know
+
+    UART2_C2 |= UART_C2_RIE_MASK; //Enable receive interrupt
+  }
+}
+
+/*! @brief The thread which handles the transmission of data
+ *
+ *  @param data
+ *  @note Assumes that UART_Init has been called.
+ */
+void TxThread(void *data)
 {
   uint8_t txData;
-  // FIFO_Get (&TxFIFO, UART2_D);
 
-  for (;;)
+  for(;;)
   {
-    OS_SemaphoreWait (TxSemaphore, 0);       //Semaphore to wait for the transmit
+    // Wait on TxSemaphore
+    OS_SemaphoreWait(TxSemaphore, 0);
+    // Transmit Data
+    FIFO_Get(&TxFIFO, &txData);
+    UART2_D = txData;
 
-    FIFO_Get(&TxFIFO, &txData);              //Obtains bytes from txFIFO
-
-    UART2_D = txData;                        //Write into UART2_D register
-
-    UART2_C2 |= UART_C2_TIE_MASK;           //Enable TIE MASK
+    UART2_C2 |= UART_C2_TIE_MASK; //Enable hardware to tell me it can transmit again
   }
 }
 
-/*! @brief UART receive thread
- *  @return void
+
+/*! @brief Interrupt service routine for the UART.
+ *
+ *  @note Assumes the transmit and receive FIFOs have been initialized.
  */
-void RxThread()
-{
-  for (;;)
-  {
-    OS_SemaphoreWait(RxSemaphore, 0);       //Semaphore to wait for the receive
-
-    FIFO_Put(&RxFIFO, UART2_D);             //Puts byte from UART2_D into RxFifo
-
-    //OS_SemaphoreSignal(PacketSemaphore);    // Semaphore signals the packet semaphore
-
-    UART2_C2 |= UART_C2_RIE_MASK;           // Enable RIE MASK for receive
-  }
-}
-
 void __attribute__ ((interrupt)) UART_ISR(void)
 {
   OS_ISREnter();
+  static uint8_t txData;
 
-  uint8_t temp = 0;
-  // Receive a character
-  if (UART2_C2 & UART_C2_RIE_MASK)       //Check if receive flag is set
+  if (UART2_C2 & UART_C2_RIE_MASK)
   {
-    if (UART2_S1 & UART_S1_RDRF_MASK)    //Clear RDRF flag by reading the status register
+    if (UART2_S1 & UART_S1_RDRF_MASK)
     {
-      OS_SemaphoreSignal(RxSemaphore);   //Semaphore signals the receive
-
-      UART2_C2 &= ~UART_C2_RIE_MASK;     //Disable RIE after bytes have been received
+      OS_SemaphoreSignal(RxSemaphore);
+      UART2_C2 &= ~UART_C2_RIE_MASK;
     }
   }
-
-  // Transmit a character
-  if (UART2_C2 & UART_C2_TIE_MASK)      //Check if tranmit flag is set
+  if (UART2_C2 & UART_C2_TIE_MASK)
   {
-    if (UART2_S1 & UART_S1_TDRE_MASK)      //Clear TDRE flag by reading the status register
+    if (UART2_S1 & UART_S1_TDRE_MASK)
     {
-      OS_SemaphoreSignal(TxSemaphore);   //Semaphore signals the receive
-
-      UART2_C2 &= ~UART_C2_TIE_MASK;    //Disable TCIE after bytes have been transmitted
+      OS_SemaphoreSignal(TxSemaphore);
+      UART2_C2 &= ~UART_C2_TIE_MASK;
     }
   }
-
   OS_ISRExit();
-
 }
+
+/*!
+ * @}
+ */

@@ -33,7 +33,7 @@
 
 #include "PIT.h"
 #include "UART.h"
-#include "Packet.h"
+#include "packet.h"
 #include "Flash.h"
 #include "LEDs.h"
 
@@ -145,19 +145,19 @@ void FrequencyTracking(uint8_t index);
   {
     if (!Flash_AllocateVar(&Timing_Mode, sizeof(*Timing_Mode)))  //Allocate the flash space for timing mode
       return false;
-    if (Timing_Mode == 0xFF)
+    if (*Timing_Mode == 0xFF)
       if(!Flash_Write16((uint16_t *)Timing_Mode, 0x1))           //If flash is empty, use default value
         return false;
 
     if (!Flash_AllocateVar(&NbRaises, sizeof(*NbRaises)))        //Allocate the flash space for number of raises
       return false;
-    if (NbRaises == 0xFF)
+    if (*NbRaises == 0xFF)
       if(!Flash_Write16((uint16_t *)NbRaises, 0x0))              //If flash is empty, use default value
         return false;
 
     if (!Flash_AllocateVar(&NbLowers, sizeof(*NbLowers)))        //Allocate the flash space for number of lowers
       return false;
-    if (NbLowers == 0xFF)
+    if (*NbLowers == 0xFF)
       if (!Flash_Write16((uint16_t *)NbLowers, 0x0))             //If flash is empty, use default value
         return false;
     return true;
@@ -172,7 +172,7 @@ void FrequencyTracking(uint8_t index);
     PacketParameter1 = 0;
     PacketParameter2 = 0;
     PacketParameter3 = 0;
-    return Packet_Put(PacketCommand, PacketParameter1, PacketParameter2, PacketParameter3);
+    Packet_Put(PacketCommand, PacketParameter1, PacketParameter2, PacketParameter3);
   }
 
   /*! @brief Sends the Read Byte from Flash packet.
@@ -184,7 +184,7 @@ void FrequencyTracking(uint8_t index);
     uint8_t byte;
 
     Flash_ReadByte(offset, &byte);
-    return Packet_Put(READ_BYTE_COMMAND, offset, 0, byte);
+    Packet_Put(READ_BYTE_COMMAND, offset, 0, byte);
   }
 
   /*! @brief Handles a received startup packet.
@@ -232,8 +232,8 @@ void FrequencyTracking(uint8_t index);
     if (Packet_Parameter1 > 2 ||Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
       return false;
     if (Packet_Parameter1 == 0)
-      return Packet_Put(TIMING_MODE_COMMAND, &Timing_Mode, 0, 0);
-    else if (!Flash_Write8((uint8_t *)Timing_Mode, Packet_Parameter1))
+      Packet_Put(TIMING_MODE_COMMAND, *Timing_Mode, 0, 0);
+    else if (!Flash_Write8(Timing_Mode, Packet_Parameter1))
       return false;
       //TODO check if this is enough for changing the timing mode
 
@@ -248,7 +248,7 @@ void FrequencyTracking(uint8_t index);
     if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
       return false;
     if (Packet_Parameter1 == 0)
-      return Packet_Put(NB_RAISES_COMMAND, &NbRaises, 0, 0);
+      Packet_Put(NB_RAISES_COMMAND, *NbRaises, 0, 0);
     else if (!Flash_Write8((uint8_t *)NbRaises, 0x00))
       return false;
 
@@ -263,7 +263,7 @@ void FrequencyTracking(uint8_t index);
     if (Packet_Parameter1 > 1 || Packet_Parameter1 < 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
       return false;
     if (Packet_Parameter1 == 0)
-      return Packet_Put(NB_LOWERS_COMMAND, &NbLowers, 0, 0);
+      Packet_Put(NB_LOWERS_COMMAND, *NbLowers, 0, 0);
     else if (!Flash_Write8((uint8_t *)NbLowers, 0x00))
       return false;
 
@@ -288,6 +288,18 @@ void FrequencyTracking(uint8_t index);
 
       case READ_BYTE_COMMAND:
         ErrorStatus = HandleProgramBytePacket();
+        break;
+
+      case TIMING_MODE_COMMAND:
+        ErrorStatus = HandleTimingModePacket();
+        break;
+
+      case NB_RAISES_COMMAND:
+        ErrorStatus = HandleNbRaisesPacket();
+        break;
+
+      case NB_LOWERS_COMMAND:
+        ErrorStatus = HandleNbLowersPacket();
         break;
 
       default:
@@ -411,12 +423,12 @@ void SamplingThread(void* pData){
       threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
 
       if(threadData->rms > HI_TRESHHOLD){
-        threadData->deviation = HI_TRESHHOLD - threadData->rms;
+        threadData->deviation = threadData->rms - HI_TRESHHOLD ;
         threadData->alarm = 1;
         PIT_Enable(1, true);
       }
       else if(threadData->rms < LO_TRESHHOLD){
-        threadData->deviation = threadData->rms - HI_TRESHHOLD;
+        threadData->deviation = LO_TRESHHOLD - threadData->rms;
         threadData->alarm = 2;
         PIT_Enable(1, true);
       }
@@ -517,6 +529,7 @@ void PIT1Thread(void* data)
 void PacketThread(void* data)
 {
   SendStartupPacket();
+  SetDefaultFlashValues();
   for (;;)
   {
     if (Packet_Get()) //Check if there is a packet in the retrieved data

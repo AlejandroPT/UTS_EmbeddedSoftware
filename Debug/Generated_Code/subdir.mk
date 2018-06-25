@@ -5,14 +5,17 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
 ../Generated_Code/Cpu.c \
+../Generated_Code/PE_LDD.c \
 ../Generated_Code/Vectors.c 
 
 OBJS += \
 ./Generated_Code/Cpu.o \
+./Generated_Code/PE_LDD.o \
 ./Generated_Code/Vectors.o 
 
 C_DEPS += \
 ./Generated_Code/Cpu.d \
+./Generated_Code/PE_LDD.d \
 ./Generated_Code/Vectors.d 
 
 

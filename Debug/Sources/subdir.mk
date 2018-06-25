@@ -4,6 +4,7 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
+../Sources/Events.c \
 ../Sources/FIFO.c \
 ../Sources/Flash.c \
 ../Sources/LEDs.c \
@@ -13,6 +14,7 @@ C_SRCS += \
 ../Sources/packet.c 
 
 OBJS += \
+./Sources/Events.o \
 ./Sources/FIFO.o \
 ./Sources/Flash.o \
 ./Sources/LEDs.o \
@@ -22,6 +24,7 @@ OBJS += \
 ./Sources/packet.o 
 
 C_DEPS += \
+./Sources/Events.d \
 ./Sources/FIFO.d \
 ./Sources/Flash.d \
 ./Sources/LEDs.d \

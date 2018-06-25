@@ -77,8 +77,9 @@ static bool WritePhrase(const uint64_t phrase)
   FTFE_FCCOBA = data[5];
   FTFE_FCCOBB = data[4];
 
+  //WaitCCIF();
   SetCCIF();
-
+  //WaitCCIF();
   return true; //Check if everything is actually OK
 }
 
@@ -201,8 +202,9 @@ bool Flash_Erase(void)
   FTFE_FCCOB1 = flashStart.s.Byte2;      //sets the flash address of the correct sector
   FTFE_FCCOB2 = flashStart.s.Byte3;
   FTFE_FCCOB3 = flashStart.s.Byte4 & 0xF0;
-
+  //WaitCCIF();
   SetCCIF();
+ // WaitCCIF();
 
   return true;
 }

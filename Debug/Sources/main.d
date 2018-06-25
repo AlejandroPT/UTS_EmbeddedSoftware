@@ -8,9 +8,8 @@ Sources/main.o: ../Sources/main.c \
  C:\Users\13113117\Desktop\UTS_EmbeddedSoftware\Library/OS.h \
  C:\Users\13113117\Desktop\UTS_EmbeddedSoftware\Library/analog.h \
  C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h \
- ../Sources/types.h ../Sources/PIT.h ../Sources/UART.h ../Sources/FIFO.h \
- C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/CPU.h \
- ../Sources/Packet.h ../Sources/Flash.h ../Sources/LEDs.h
+ ../Sources/types.h ../Sources/PIT.h ../Sources/UART.h \
+ ../Sources/packet.h ../Sources/Flash.h ../Sources/LEDs.h
 
 C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/Cpu.h:
 
@@ -36,11 +35,7 @@ C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h:
 
 ../Sources/UART.h:
 
-../Sources/FIFO.h:
-
-C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/CPU.h:
-
-../Sources/Packet.h:
+../Sources/packet.h:
 
 ../Sources/Flash.h:
 

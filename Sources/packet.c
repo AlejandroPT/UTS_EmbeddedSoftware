@@ -1,117 +1,159 @@
-/*! @file
+/*!
+ * @file <packet.c>
  *
- *  @brief Routines to implement packet encoding and decoding for the serial port.
+ * @brief
+ *         packet module.
+ *         This module contains the code for managing incoming and outgoing packets
  *
- *  This contains the implementation of functions for implementing the "Tower to PC Protocol" 5-byte packets.
- *
- *  @author 11989668, 13113117
- *  @date 2018-04-04
+ *@author Corey Stidston & Menka Mehta
+ * @date 2017-03-29
+ */
+/*!
+ * @addtogroup packet_module packet documentation
+ * @{
  */
 
+/****************************************HEADER FILES****************************************************/
 #include "packet.h"
-#include "OS.h"
+#include "UART.h"
+#include "MK70F12.h"
+#include "types.h"
+#include "LEDs.h"
+#include "Flash.h"
+#include "PE_Types.h"
+#include "Cpu.h"
 
-const uint8_t PACKET_ACK_MASK = 0x80;
+/****************************************GLOBAL VARS*****************************************************/
 
-OS_ECB *PacketPutAccessSemaphore;
+TPacket Packet;
 
-//returns true if the packet passes the checksum, false otherwise
-bool PacketTest(uint8_t checksum)
+uint8_t packet_position = 0;  //Used to mark the position of incoming bytes
+
+const uint8_t PACKET_ACK_MASK = 0x80u; //Used to mask out the Acknowledgment bit
+
+/****************************************PRIVATE FUNCTION DECLARATION***********************************/
+
+bool PacketTest(void);
+
+/****************************************PRIVATE FUNCTION DEFINITION***************************************/
+
+/*! @brief Handles the stored packet
+ *
+ *  @return bool - True if the calculated checksum is equal to the packet checksum
+ */
+bool PacketTest(void)
 {
-  uint8_t calc_checksum = Packet_Command ^ Packet_Parameter1 ^ Packet_Parameter2 ^ Packet_Parameter3;
-  return (calc_checksum == checksum);
+  uint8_t calculated_checksum = Packet_Command ^ Packet_Parameter1 ^ Packet_Parameter2 ^ Packet_Parameter3;
+  return (calculated_checksum == Packet_Checksum);
 }
 
+/****************************************PUBLIC FUNCTION DEFINITION***************************************/
+
+/*! @brief Initializes the packets by calling the initialization routines of the supporting software modules.
+ *
+ *  @param baudRate The desired baud rate in bits/sec.
+ *  @param moduleClk The module clock rate in Hz
+ *  @return bool - TRUE if the packet module was successfully initialized.
+ */
 bool Packet_Init(const uint32_t baudRate, const uint32_t moduleClk)
 {
-  PacketPutAccessSemaphore = OS_SemaphoreCreate(1);
-  return UART_Init(baudRate, moduleClk);
+  PacketPutSemaphore = OS_SemaphoreCreate(1); //Create Packet Semaphore
+
+  return (UART_Init(baudRate, moduleClk));
 }
 
-bool Packet_Get(void)
-{
-  EnterCritical();
-  static uint8_t Position = 0;
+/*! @brief Attempts to get a packet from the received data.
+ *
+ *  @return bool - TRUE if a valid packet was received.
+ */
+bool Packet_Get(void) {
+  //EnterCritical();
   uint8_t uartData;
-  if (!UART_InChar(&uartData)) {
-    ExitCritical();
-    return false;
-  }
-  switch (Position) {
+
+  //Checks whether there is data in the RxFIFO and stores it the address pointed by uartData
+  UART_InChar(&uartData);
+  switch (packet_position)
+  {
+    //Command byte
     case 0:
       Packet_Command = uartData;
-      Position++;
-      ExitCritical();
-      return false;
+      packet_position++;
+      //ExitCritical();
+      return false; //Return false, incomplete packet
+      break;
+
+      //Parameter1 byte
     case 1:
       Packet_Parameter1 = uartData;
-      Position++;
-      ExitCritical();
-      return false;
+      packet_position++;
+      //ExitCritical();
+      return false; //Return false, incomplete packet
+      break;
+
+      //Parameter2 byte
     case 2:
       Packet_Parameter2 = uartData;
-      Position++;
+      packet_position++;
       ExitCritical();
-      return false;
+      return false; //Return false, incomplete packet
+      break;
+
+      //Parameter3 byte
     case 3:
       Packet_Parameter3 = uartData;
-      Position++;
-      ExitCritical();
-      return false;
+      packet_position++;
+      //ExitCritical();
+      return false; //Return false, incomplete packet
+      break;
+
+      //Checksum byte
     case 4:
-      // test the checksum
-      if (PacketTest(uartData)) {
-        Position = 0;
-        ExitCritical();
-        return true;
+      Packet_Checksum = uartData;
+
+      if (PacketTest())
+      {
+        packet_position = 0;
+        //ExitCritical();
+        return true; //Return true, complete packet
       }
+      //The Checksum doesn't match
+      //Shift the packets down
       Packet_Command = Packet_Parameter1;
       Packet_Parameter1 = Packet_Parameter2;
       Packet_Parameter2 = Packet_Parameter3;
-      Packet_Parameter3 = uartData;
-      ExitCritical();
+      Packet_Parameter3 = Packet_Checksum;
+      packet_position = 0;
+      //ExitCritical();
       return false;
-    default:
-      //reset the counter
-      Position = 0;
-      ExitCritical();
-    return false;
+      break;
+
+    default: //reset
+      packet_position = 0;
+      //ExitCritical();
+      break;
   }
-  ExitCritical();
+
+  // ExitCritical();
   return false;
 }
 
-bool Packet_Put(const uint8_t command, const uint8_t parameter1, const uint8_t parameter2, const uint8_t parameter3)
+/*! @brief Builds a packet and places it in the transmit FIFO buffer.
+ *
+ *  @return bool - TRUE if a valid packet was sent.
+ */
+void Packet_Put(const uint8_t command, const uint8_t parameter1, const uint8_t parameter2, const uint8_t parameter3)
 {
-  //If there is an error (false) in UART_OutChar, return a false
-  OS_SemaphoreWait(PacketPutAccessSemaphore, 0);
-  if (!UART_OutChar(command))
-  {
-    OS_SemaphoreSignal(PacketPutAccessSemaphore);
-    return false;
-  }
-  if (!UART_OutChar(parameter1))
-  {
-    OS_SemaphoreSignal(PacketPutAccessSemaphore);
-    return false;
-  }
-  if (!UART_OutChar(parameter2))
-  {
-    OS_SemaphoreSignal(PacketPutAccessSemaphore);
-    return false;
-  }
-  if (!UART_OutChar(parameter3))
-  {
-    OS_SemaphoreSignal(PacketPutAccessSemaphore);
-    return false;
-  }
+  OS_SemaphoreWait(PacketPutSemaphore, 0); //Wait on Packet Put Semaphore
 
-  if (!UART_OutChar(command ^ parameter1 ^ parameter2 ^ parameter3))  // Sending the checksum
-  {
-    OS_SemaphoreSignal(PacketPutAccessSemaphore);
-    return false;
-  }
+  UART_OutChar(command); //Place Command byte in TxFIFO
+  UART_OutChar(parameter1); //Place Parameter1 byte in TxFIFO
+  UART_OutChar(parameter2); //Place Parameter2 byte in TxFIFO
+  UART_OutChar(parameter3); //Place Parameter3 byte in TxFIFO
+  UART_OutChar(command ^ parameter1 ^ parameter2 ^ parameter3); //Place Checksum byte in TxFIFO
 
-  OS_SemaphoreSignal(PacketPutAccessSemaphore);
-  return true; // All sent fine
+  OS_SemaphoreSignal(PacketPutSemaphore); //Signal Packet Put Semaphore
 }
+
+/*!
+ * @}
+ */
