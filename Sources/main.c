@@ -37,13 +37,64 @@
 #include "Flash.h"
 #include "LEDs.h"
 
+#define NB_ANALOG_CHANNELS 3
+
+/*! @brief Data structure used to pass Analog configuration to a user thread
+ *
+ */
+typedef struct AnalogThreadData
+{
+  OS_ECB* semaphore;
+  uint8_t channelNb;
+  double rms;
+  uint8_t alarm;         //0 for nit triggered, 1 high trigger, 2 for low triggered
+  double deviation;      //Deviation from acceptable SetDefaultFlashValues
+  int16_t samples[16];   //Deviation from acceptable SetDefaultFlashValues
+  uint16_t trigCount;    //Deviation from acceptable SetDefaultFlashValues
+
+} TAnalogThreadData;
+
+/*! @brief Analog thread configuration data
+ *
+ */
+static TAnalogThreadData ChannelData[NB_ANALOG_CHANNELS] =
+{
+  {  //Channel A in
+    .semaphore = NULL,
+    .channelNb = 0,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
+  },
+  {  //Channel B in
+    .semaphore = NULL,
+    .channelNb = 1,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
+  },
+  {  //Channel C in
+    .semaphore = NULL,
+    .channelNb = 2,
+    .rms = 0.0,
+    .alarm =0,
+    .deviation = 0.0,
+    .samples[0] = 0,
+    .trigCount = 0
+  },
+};
+
 
 // ----------------------------------------
 // Thread set up
 // ----------------------------------------
 // Arbitrary thread stack size - big enough for stacking of interrupts and OS use.
 #define THREAD_STACK_SIZE 100
-#define NB_ANALOG_CHANNELS 3
+
 
 #define BAUD_RATE 115200
 
@@ -282,7 +333,7 @@ void FrequencyTracking(uint8_t index);
 
     double voltage = ChannelData[Packet_Parameter1-1].rms;
     uint8_t unit = (uint8_t)voltage;
-    uint8_t decimal = (uint8_t)(voltage-unit)*100;
+    uint8_t decimal = (uint8_t)((voltage-unit)*100);
 
     Packet_Put(VOLTAGE_COMMAND, Packet_Parameter1, unit, decimal);
 
@@ -298,9 +349,9 @@ void FrequencyTracking(uint8_t index);
       return false;
 
     uint8_t unit = (uint8_t)Frequency;
-    uint8_t decimal = (uint8_t)(Frequency-unit)*100;
+    uint8_t decimal = (uint8_t)((Frequency-unit)*100);
 
-    Packet_Put(FREQUENCY_COMMAND, Packet_Parameter1, unit, decimal);
+    Packet_Put(FREQUENCY_COMMAND, unit, decimal, 0);
 
     return true;
   }
@@ -369,54 +420,7 @@ void FrequencyTracking(uint8_t index);
 //}
 //
 
-/*! @brief Data structure used to pass Analog configuration to a user thread
- *
- */
-typedef struct AnalogThreadData
-{
-  OS_ECB* semaphore;
-  uint8_t channelNb;
-  double rms;
-  uint8_t alarm;         //0 for nit triggered, 1 high trigger, 2 for low triggered
-  double deviation;      //Deviation from acceptable SetDefaultFlashValues
-  int16_t samples[16];   //Deviation from acceptable SetDefaultFlashValues
-  uint16_t trigCount;    //Deviation from acceptable SetDefaultFlashValues
 
-} TAnalogThreadData;
-
-/*! @brief Analog thread configuration data
- *
- */
-static TAnalogThreadData ChannelData[NB_ANALOG_CHANNELS] =
-{
-  {  //Channel A in
-    .semaphore = NULL,
-    .channelNb = 0,
-    .rms = 0.0,
-    .alarm =0,
-    .deviation = 0.0,
-    .samples[0] = 0,
-    .trigCount = 0
-  },
-  {  //Channel B in
-    .semaphore = NULL,
-    .channelNb = 1,
-    .rms = 0.0,
-    .alarm =0,
-    .deviation = 0.0,
-    .samples[0] = 0,
-    .trigCount = 0
-  },
-  {  //Channel C in
-    .semaphore = NULL,
-    .channelNb = 2,
-    .rms = 0.0,
-    .alarm =0,
-    .deviation = 0.0,
-    .samples[0] = 0,
-    .trigCount = 0
-  },
-};
 
 /*! @brief Initialises modules.
  *
@@ -457,11 +461,11 @@ void SamplingThread(void* pData){
     OS_SemaphoreWait(threadData->semaphore,0);
 
     Analog_Get(threadData->channelNb, &inputValue);
-    threadData->samples[nbSamples++] = inputValue;
+    threadData->samples[nbSamples] = inputValue;
 
     if (threadData->channelNb == 0)
-      FrequencyTracking(nbSamples);
-
+      FrequencyTracking2(nbSamples);
+    nbSamples++;
     if(nbSamples == 16){
       nbSamples = 0;                                       //Resets the amount of samples taken
       threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
@@ -730,6 +734,71 @@ void FrequencyTracking(uint8_t index)
     }
   }
   spaceBetweenOffsets++;
+}
+
+float calculateTimeOffset(float sample1, float sample2)
+{
+  sample1 = rawToVoltage(sample1);
+  sample2 = rawToVoltage(sample2);
+  float gradient = (sample2 - sample1)/(1);
+  float timeOffset = ((-sample1) / gradient);
+  return timeOffset;
+}
+
+void FrequencyTracking2(uint8_t count)
+{
+  static uint8_t crossingNb = 1;
+  static float offset1;
+  static float offset2;
+  static float
+  sampleOffset;
+  //Avoid count[-1]..
+  if (count != 0)
+  {
+    //IF:
+    //1. Sample at count is positive
+    //2. Sample at count-1 is negative
+    if (ChannelData[CHA].samples[count] > 0 && ChannelData[CHA].samples[count-1] < 0)
+    {
+      // Switch between first and second zero crossing
+      switch (crossingNb)
+      {
+        // First zero crossing
+        case 1:
+          // Calculate time offset (fraction of a sample) between samples[count] and the zero crossing
+          offset1 = calculateTimeOffset(ChannelData[CHA].samples[count-1], ChannelData[CHA].samples[count]);
+          sampleOffset = 0; // Reset sample offset
+          crossingNb = 2; // We've found the first zero crossing, find the next..
+          break;
+
+          // Second zero crossing
+        case 2:
+          // Calculate time offset (fraction of a sample) between samples[count] and the zero crossing
+          offset2 = calculateTimeOffset(ChannelData[CHA].samples[count-1], ChannelData[CHA].samples[count]);
+          // Number of samples between the first zero crossing and the second zero crossing
+          // Minus the time offset of the first zero crossing
+          // Plus the time offset of the second zero crossing
+          // Multiplied by the sample period..
+          //float period_s =  // Convert Period in ns to period in s .. Is there a better way?
+          double new_period = (sampleOffset - offset1 + offset2) * ((float) SamplingRate / 1000000000); // Period of wave in s
+          double frequency = (1 / (new_period)); // Calculate frequency
+
+          // Filter 'bad' frequencies
+          if (frequency >= 47.5 && frequency <= 52.5)
+          {
+            Frequency = frequency; // Set global frequency
+            PeriodNs = ((1 / frequency) / 16 ) * 1000000000; // Period in nanoseconds
+            PIT_Set(0, PeriodNs, true); // Redefine PIT period and restart
+          }
+          crossingNb = 1;
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  // Increment sample offset
+  sampleOffset++;
 }
 
 /*!
