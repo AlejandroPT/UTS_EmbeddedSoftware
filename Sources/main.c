@@ -271,6 +271,40 @@ void FrequencyTracking(uint8_t index);
 
     return true;
   }
+
+  /*! @brief Handles a received voltage packet.
+   *  @return bool - TRUE if data is correct and corresponds to the packet.
+   */
+  bool HandleVoltagePacket()
+  {
+    if (Packet_Parameter1 < 1 || Packet_Parameter1 > 3 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+
+    double voltage = ChannelData[Packet_Parameter1-1].rms;
+    uint8_t unit = (uint8_t)voltage;
+    uint8_t decimal = (uint8_t)(voltage-unit)*100;
+
+    Packet_Put(VOLTAGE_COMMAND, Packet_Parameter1, unit, decimal);
+
+    return true;
+  }
+
+  /*! @brief Handles a received frequency packet.
+     *  @return bool - TRUE if data is correct and corresponds to the packet.
+     */
+  bool HandleFrequencyPacket()
+  {
+    if (Packet_Parameter1 != 0 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+
+    uint8_t unit = (uint8_t)Frequency;
+    uint8_t decimal = (uint8_t)(Frequency-unit)*100;
+
+    Packet_Put(FREQUENCY_COMMAND, Packet_Parameter1, unit, decimal);
+
+    return true;
+  }
+
   /*! @brief Checks for new packages and handles them depending on the comand.
    *
    *  @return bool - TRUE if data is correct and corresponds to the packet.
@@ -302,6 +336,14 @@ void FrequencyTracking(uint8_t index);
 
       case NB_LOWERS_COMMAND:
         ErrorStatus = HandleNbLowersPacket();
+        break;
+
+      case VOLTAGE_COMMAND:
+        ErrorStatus = HandleVoltagePacket();
+        break;
+
+      case FREQUENCY_COMMAND:
+        ErrorStatus = HandleFrequencyPacket();
         break;
 
       default:
