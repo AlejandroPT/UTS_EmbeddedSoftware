@@ -9,7 +9,8 @@ Sources/main.o: ../Sources/main.c \
  C:\Users\13113117\Desktop\UTS_EmbeddedSoftware\Library/analog.h \
  C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h \
  ../Sources/types.h ../Sources/PIT.h ../Sources/UART.h \
- ../Sources/packet.h ../Sources/Flash.h ../Sources/LEDs.h
+ ../Sources/packet.h ../Sources/Flash.h ../Sources/LEDs.h \
+ ../Sources/FFT_UT.h
 
 C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code/Cpu.h:
 
@@ -40,3 +41,5 @@ C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources/types.h:
 ../Sources/Flash.h:
 
 ../Sources/LEDs.h:
+
+../Sources/FFT_UT.h:

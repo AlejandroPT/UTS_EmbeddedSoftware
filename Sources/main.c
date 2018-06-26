@@ -36,6 +36,7 @@
 #include "packet.h"
 #include "Flash.h"
 #include "LEDs.h"
+#include "FFT_UT.h"
 
 #define NB_ANALOG_CHANNELS 3
 
@@ -159,6 +160,7 @@ static void PITCallback(void* arg);
 double rmsCalc(int16_t samples[16]);
 int16_t voltageToRaw(double voltage);
 void FrequencyTracking(uint8_t index);
+double Spectral_Analysis(unsigned long k);
 
 //Packet Handling Functions
 //{
@@ -356,6 +358,23 @@ void FrequencyTracking(uint8_t index);
     return true;
   }
 
+  /*! @brief Handles a received spectral packet.
+     *  @return bool - TRUE if data is correct and corresponds to the packet.
+     */
+  bool HandleSpectrumPacket()
+  {
+    if (Packet_Parameter1 < 0 || Packet_Parameter1 > 7 || Packet_Parameter2 != 0 || Packet_Parameter3 != 0) //Check that the values are correct
+      return false;
+
+    double spectrum = Spectral_Analysis(Packet_Parameter1);
+    uint8_t unit = (uint8_t)spectrum;
+    uint8_t decimal = (uint8_t)((spectrum-unit)*100);
+
+    Packet_Put(SPECTRUM_COMMAND,Packet_Parameter1 ,unit , decimal);
+
+    return true;
+  }
+
   /*! @brief Checks for new packages and handles them depending on the comand.
    *
    *  @return bool - TRUE if data is correct and corresponds to the packet.
@@ -395,6 +414,10 @@ void FrequencyTracking(uint8_t index);
 
       case FREQUENCY_COMMAND:
         ErrorStatus = HandleFrequencyPacket();
+        break;
+
+      case SPECTRUM_COMMAND:
+        ErrorStatus = HandleSpectrumPacket();
         break;
 
       default:
@@ -459,46 +482,49 @@ void SamplingThread(void* pData){
   uint8_t nbSamples = 0;
   for (;;){
     OS_SemaphoreWait(threadData->semaphore,0);
+                                      //Resets the amount of samples taken
+    threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
 
-    Analog_Get(threadData->channelNb, &inputValue);
-    threadData->samples[nbSamples] = inputValue;
-
-    if (threadData->channelNb == 0)
-      FrequencyTracking2(nbSamples);
-    nbSamples++;
-    if(nbSamples == 16){
-      nbSamples = 0;                                       //Resets the amount of samples taken
-      threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
-
-      if(threadData->rms > HI_TRESHHOLD){
-        threadData->deviation = threadData->rms - HI_TRESHHOLD ;
-        threadData->alarm = 1;
-        PIT_Enable(1, true);
-      }
-      else if(threadData->rms < LO_TRESHHOLD){
-        threadData->deviation = LO_TRESHHOLD - threadData->rms;
-        threadData->alarm = 2;
-        PIT_Enable(1, true);
-      }
-      else
-      {
-        threadData->alarm = 0;
-        threadData->trigCount = 0;
-      }
+    if(threadData->rms > HI_TRESHHOLD){
+      threadData->deviation = threadData->rms - HI_TRESHHOLD ;
+      threadData->alarm = 1;
+      PIT_Enable(1, true);
     }
+    else if(threadData->rms < LO_TRESHHOLD){
+      threadData->deviation = LO_TRESHHOLD - threadData->rms;
+      threadData->alarm = 2;
+      PIT_Enable(1, true);
+    }
+    else
+    {
+      threadData->alarm = 0;
+      threadData->trigCount = 0;
+    }
+    for(uint8_t i = 1; i < 16; i++)
+      FrequencyTracking2(i);
   }
+
 }
 
 //Thread to signal when channels should sample
 void PIT0Thread(void* data)
 {
+  uint8_t nbSamples = 0;
   for (;;)
   {
     OS_SemaphoreWait(PIT0_Semaphore, 0);       //Wait on PIT Semaphore
-
+    int16_t inputValue;
+    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++){
+      Analog_Get(ChannelData[analogNb].channelNb, &inputValue);
+      ChannelData[analogNb].samples[nbSamples] = inputValue;
+    }
+    nbSamples++;
     // Signal the analog channels to take a sample
-    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
-      OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
+    if(nbSamples == 16){
+      for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
+        OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
+      nbSamples = 0;
+    }
   }
 }
 
@@ -750,14 +776,12 @@ void FrequencyTracking2(uint8_t count)
   static uint8_t crossingNb = 1;
   static float offset1;
   static float offset2;
-  static float
-  sampleOffset;
+  static float sampleOffset;
+
   //Avoid count[-1]..
   if (count != 0)
   {
-    //IF:
-    //1. Sample at count is positive
-    //2. Sample at count-1 is negative
+
     if (ChannelData[CHA].samples[count] > 0 && ChannelData[CHA].samples[count-1] < 0)
     {
       // Switch between first and second zero crossing
@@ -799,6 +823,25 @@ void FrequencyTracking2(uint8_t count)
   }
   // Increment sample offset
   sampleOffset++;
+}
+
+//Calculates the Spectrum of the samples in Channel A
+//k is the harmonic number
+double Spectral_Analysis(unsigned long k){
+  double data[32];
+  for(uint8_t i = 0; i < 32; i+=2){
+    data[i] = rawToVoltage(ChannelData[CHA].samples[i]);
+    data[i+1] = 0; //Make real part 0
+  }
+
+  fft(data, 16);
+
+  double v = fftMagnitude(data,16,k);
+  //double dB = fftMagdB(data,16,k,2.0); // largest component is 2V
+  double phase = fftPhase(data,16,k);
+  double freq = fftFrequency(16,k,Frequency * 16);
+
+  return v;
 }
 
 /*!
