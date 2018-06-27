@@ -485,27 +485,26 @@ void SamplingThread(void* pData){
                                       //Resets the amount of samples taken
     threadData->rms = rmsCalc(threadData->samples);      //Calculates the RMS value
 
-    if(threadData->rms > HI_TRESHHOLD){
-      threadData->deviation = threadData->rms - HI_TRESHHOLD ;
-      threadData->alarm = 1;
+    if(threadData->rms > HI_TRESHHOLD){                                      //Checks if the voltage is above the accepted terms
+      threadData->deviation = threadData->rms - HI_TRESHHOLD ;               //stores the deviation
+      threadData->alarm = 1;                                                 //marks the alarm as active
       PIT_Enable(1, true);
     }
-    else if(threadData->rms < LO_TRESHHOLD){
+    else if(threadData->rms < LO_TRESHHOLD){                                //Checks if the voltage is below the accepted terms
       threadData->deviation = LO_TRESHHOLD - threadData->rms;
       threadData->alarm = 2;
       PIT_Enable(1, true);
     }
     else
     {
-      threadData->alarm = 0;
-      threadData->trigCount = 0;
+      threadData->alarm = 0;                                               //Lowers alarm
+      threadData->trigCount = 0;                                           //resets the timing
     }
     for(uint8_t i = 1; i < 16; i++){
       FrequencyTracking(i);
 
     }
   }
-
 }
 
 //Thread to signal when channels should sample
@@ -514,16 +513,16 @@ void PIT0Thread(void* data)
   uint8_t nbSamples = 0;
   for (;;)
   {
-    OS_SemaphoreWait(PIT0_Semaphore, 0);       //Wait on PIT Semaphore
+    OS_SemaphoreWait(PIT0_Semaphore, 0);                                             //Wait on PIT Semaphore
     int16_t inputValue;
-    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++){
-      Analog_Get(ChannelData[analogNb].channelNb, &inputValue);
-      ChannelData[analogNb].samples[nbSamples] = inputValue;
+    for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++){          //run through all the channels
+      Analog_Get(ChannelData[analogNb].channelNb, &inputValue);                     //sample the channel
+      ChannelData[analogNb].samples[nbSamples] = inputValue;                        //store the sample
     }
     nbSamples++;
     // Signal the analog channels to take a sample
     if(nbSamples == 16){
-      for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)
+      for (uint8_t analogNb = 0; analogNb < NB_ANALOG_CHANNELS; analogNb++)         //if all 16 samples are ready, signal the next thread
         OS_SemaphoreSignal(ChannelData[analogNb].semaphore);
       nbSamples = 0;
     }
@@ -542,23 +541,23 @@ void PIT1Thread(void* data)
     {
       if(ChannelData[analogNb].alarm != 0)
       {
-        if(*Timing_Mode == 2)    //If mode is in inverse, do calculation, else add 5 to counter to make it trigger in 5 seconds
+        if(*Timing_Mode == 2)                                                      //If mode is in inverse, do calculation, else add 5 to counter to make it trigger in 5 seconds
         {
           double tempCount = 25.0 / (0.5 / ChannelData[analogNb].deviation * 5);   //Calculation to see how much to increment in timer considerering a 100Hz interrupt
 
-          if(tempCount > 25.0)   //Adjust if delay is going to be less than 1 second
+          if(tempCount > 25.0)                                                     //Adjust if delay is going to be less than 1 second
             tempCount = 25.0;
 
-          if(tempCount < 1)   //Adjust if deviation is so small no increment will be given, max delay is 25 seconds
+          if(tempCount < 1)                                                        //Adjust if deviation is so small no increment will be given, max delay is 25 seconds
             tempCount = 1.0;
 
-          ChannelData[analogNb].trigCount += (uint16_t)(tempCount);
+          ChannelData[analogNb].trigCount += (uint16_t)(tempCount);                //Increment the trigcount by the nessecary value
         }
         else
-          ChannelData[analogNb].trigCount += 5;
+          ChannelData[analogNb].trigCount += 5;                                   //if direct timing, invrement 5 2500 / 5 / 100Hz = 5 sec
 
         //If elapsed time has occured
-        if(ChannelData[analogNb].trigCount >= 2500)
+        if(ChannelData[analogNb].trigCount >= 2500)                               //Check if the time has run out, and the triggers need to be set
         {
           //If signal was above threshold, trigger a lower
           if(ChannelData[analogNb].alarm == 1)
@@ -587,7 +586,7 @@ void PIT1Thread(void* data)
           ChannelData[analogNb].trigCount++;
       }
 
-      alarm += ChannelData[analogNb].alarm;   //result should be 0 (false) if all alarm are off
+      alarm += ChannelData[analogNb].alarm;            //result should be 0 (false) if all alarm are off
 
     }
     Alarm = alarm;
@@ -769,12 +768,13 @@ void FrequencyTracking(uint8_t index)
 //k is the harmonic number
 double Spectral_Analysis(unsigned long k){
   double data[32];
+  //format the data so that it fits with the library requierements
   for(uint8_t i = 0; i < 32; i+=2){
     data[i] = rawToVoltage(ChannelData[CHA].samples[i]);
     data[i+1] = 0; //Make real part 0
   }
 
-  fft(data, 16);
+  fft(data, 16);                                           //calculate the fft
 
   double v = fftMagnitude(data,16,k);
   //double dB = fftMagdB(data,16,k,2.0); // largest component is 2V

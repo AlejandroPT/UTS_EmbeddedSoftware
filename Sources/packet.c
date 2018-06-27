@@ -4,9 +4,6 @@
  * @brief
  *         packet module.
  *         This module contains the code for managing incoming and outgoing packets
- *
- *@author Corey Stidston & Menka Mehta
- * @date 2017-03-29
  */
 /*!
  * @addtogroup packet_module packet documentation
