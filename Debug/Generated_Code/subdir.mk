@@ -23,7 +23,7 @@ C_DEPS += \
 Generated_Code/%.o: ../Generated_Code/%.c
 	@echo 'Building file: $<'
 	@echo 'Invoking: Cross ARM C Compiler'
-	arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -O0 -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections  -g3 -I"C:\Users\13113117\Desktop\UTS_EmbeddedSoftware\Library" -I"C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Static_Code/IO_Map" -I"C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Sources" -I"C:/Users/13113117/Desktop/UTS_EmbeddedSoftware/Generated_Code" -std=c99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" -c -o "$@" "$<"
+	arm-none-eabi-gcc -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16 -O0 -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections  -g3 -I"C:\Users\13113117\Desktop\Project13113117\UTS_EmbeddedSoftware\Library" -I"C:/Users/13113117/Desktop/Project13113117/UTS_EmbeddedSoftware/Static_Code/IO_Map" -I"C:/Users/13113117/Desktop/Project13113117/UTS_EmbeddedSoftware/Sources" -I"C:/Users/13113117/Desktop/Project13113117/UTS_EmbeddedSoftware/Generated_Code" -std=c99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" -c -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 

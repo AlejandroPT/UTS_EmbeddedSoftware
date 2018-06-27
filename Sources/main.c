@@ -500,8 +500,10 @@ void SamplingThread(void* pData){
       threadData->alarm = 0;
       threadData->trigCount = 0;
     }
-    for(uint8_t i = 1; i < 16; i++)
-      FrequencyTracking2(i);
+    for(uint8_t i = 1; i < 16; i++){
+      FrequencyTracking(i);
+
+    }
   }
 
 }
@@ -749,10 +751,11 @@ void FrequencyTracking(uint8_t index)
   else if (sample1 > 0 && sample2 < 0)
   {
     offset2 = (-sample1) / (sample2 - sample1);      //calculate the offset in fractions between samples
-    double newPeriodNs = ((spaceBetweenOffsets - offset1 + offset2) / 8 * PeriodNs); // Period of wave in s
+    double newPeriodNs = ((spaceBetweenOffsets - offset1 + offset2) * PeriodNs / 8); // Period of wave in s
     double newFreq = 1.0  / (newPeriodNs / 1000000000);
     if (newFreq >= 47.5 && newFreq <= 52.5)
     {
+      uint8_t temp = 9;
       Frequency = newFreq;                           //Update global frequency
       PeriodNs = (1 / Frequency) * 1000000000;
       SamplingRate = PeriodNs / 16;
@@ -760,69 +763,6 @@ void FrequencyTracking(uint8_t index)
     }
   }
   spaceBetweenOffsets++;
-}
-
-float calculateTimeOffset(float sample1, float sample2)
-{
-  sample1 = rawToVoltage(sample1);
-  sample2 = rawToVoltage(sample2);
-  float gradient = (sample2 - sample1)/(1);
-  float timeOffset = ((-sample1) / gradient);
-  return timeOffset;
-}
-
-void FrequencyTracking2(uint8_t count)
-{
-  static uint8_t crossingNb = 1;
-  static float offset1;
-  static float offset2;
-  static float sampleOffset;
-
-  //Avoid count[-1]..
-  if (count != 0)
-  {
-
-    if (ChannelData[CHA].samples[count] > 0 && ChannelData[CHA].samples[count-1] < 0)
-    {
-      // Switch between first and second zero crossing
-      switch (crossingNb)
-      {
-        // First zero crossing
-        case 1:
-          // Calculate time offset (fraction of a sample) between samples[count] and the zero crossing
-          offset1 = calculateTimeOffset(ChannelData[CHA].samples[count-1], ChannelData[CHA].samples[count]);
-          sampleOffset = 0; // Reset sample offset
-          crossingNb = 2; // We've found the first zero crossing, find the next..
-          break;
-
-          // Second zero crossing
-        case 2:
-          // Calculate time offset (fraction of a sample) between samples[count] and the zero crossing
-          offset2 = calculateTimeOffset(ChannelData[CHA].samples[count-1], ChannelData[CHA].samples[count]);
-          // Number of samples between the first zero crossing and the second zero crossing
-          // Minus the time offset of the first zero crossing
-          // Plus the time offset of the second zero crossing
-          // Multiplied by the sample period..
-          //float period_s =  // Convert Period in ns to period in s .. Is there a better way?
-          double new_period = (sampleOffset - offset1 + offset2) * ((float) SamplingRate / 1000000000); // Period of wave in s
-          double frequency = (1 / (new_period)); // Calculate frequency
-
-          // Filter 'bad' frequencies
-          if (frequency >= 47.5 && frequency <= 52.5)
-          {
-            Frequency = frequency; // Set global frequency
-            PeriodNs = ((1 / frequency) / 16 ) * 1000000000; // Period in nanoseconds
-            PIT_Set(0, PeriodNs, true); // Redefine PIT period and restart
-          }
-          crossingNb = 1;
-          break;
-        default:
-          break;
-      }
-    }
-  }
-  // Increment sample offset
-  sampleOffset++;
 }
 
 //Calculates the Spectrum of the samples in Channel A
