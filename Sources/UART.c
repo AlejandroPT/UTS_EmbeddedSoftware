@@ -3,9 +3,6 @@
  *  @brief I/O routines for UART communications on the TWR-K70F120M.
  *
  *  This contains the functions for operating the UART (serial port).
- *
- *  @author Corey Stidston & Menka Mehta
- *  @date 2017-04-18
  */
 /*!
  * @addtogroup UART_module UART documentation
